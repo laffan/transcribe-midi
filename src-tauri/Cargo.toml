@@ -1,0 +1,22 @@
+[package]
+name = "unplugged"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unplugged — a MIDI sequencing DAW."
+default-run = "unplugged"
+
+[lib]
+# `staticlib` and `cdylib` are required for the iOS target; `rlib` keeps the binary
+# and integration tests able to link it.
+name = "unplugged_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+unplugged-core = { path = "../crates/unplugged-core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true

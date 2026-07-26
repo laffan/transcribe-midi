@@ -1,0 +1,136 @@
+/*
+ * Design tokens. The single source of truth for colour, spacing and type.
+ *
+ * Dark-first, per the spec: the dark values are the defaults on :root and the light
+ * theme overrides them. No component library — every surface in the app composes from
+ * these, so a change here is a change everywhere.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  /* Surfaces, darkest to lightest. bg-0 is the window, bg-3 is a raised control. */
+  --bg-0: #0e0f12;
+  --bg-1: #15171c;
+  --bg-2: #1c1f26;
+  --bg-3: #242832;
+  --bg-inset: #0a0b0e;
+
+  --border: #2b303b;
+  --border-strong: #3a4151;
+
+  --text-0: #e8eaf0;
+  --text-1: #a8aec0;
+  --text-2: #6f7689;
+  --text-inverse: #0e0f12;
+
+  --accent: #5b8dd9;
+  --accent-hover: #6f9de3;
+  --accent-muted: rgba(91, 141, 217, 0.16);
+
+  --danger: #d9635b;
+  --danger-hover: #e2756e;
+  --danger-muted: rgba(217, 99, 91, 0.14);
+
+  --success: #6cb08a;
+  --warning: #d9a441;
+
+  /* Piano roll / keyboard specifics, used from Phase 2 onward. */
+  --key-white: #e8eaf0;
+  --key-white-active: var(--accent);
+  --key-black: #1c1f26;
+  --key-black-active: var(--accent-hover);
+  --grid-line: #21252e;
+  --grid-line-bar: #333a48;
+  --playhead: #d9a441;
+
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  --bg-0: #f4f5f7;
+  --bg-1: #ffffff;
+  --bg-2: #eceef2;
+  --bg-3: #e2e5ea;
+  --bg-inset: #e8eaee;
+
+  --border: #d3d7de;
+  --border-strong: #b6bcc7;
+
+  --text-0: #14161a;
+  --text-1: #4b5160;
+  --text-2: #7b8291;
+  --text-inverse: #ffffff;
+
+  --accent: #3f72c0;
+  --accent-hover: #35639f;
+  --accent-muted: rgba(63, 114, 192, 0.14);
+
+  --danger: #c0433b;
+  --danger-hover: #a5372f;
+  --danger-muted: rgba(192, 67, 59, 0.12);
+
+  --success: #3f8a63;
+  --warning: #b5842c;
+
+  --key-white: #ffffff;
+  --key-white-active: var(--accent);
+  --key-black: #2a2e36;
+  --key-black-active: var(--accent-hover);
+  --grid-line: #e0e3e9;
+  --grid-line-bar: #c3c8d2;
+  --playhead: #b5842c;
+
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.18);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+:root {
+  /* 4px base. The UI is dense by design, so the small end of the scale gets used most. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 19px;
+  --text-2xl: 26px;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  --transition-fast: 90ms ease;
+  --transition-med: 160ms ease;
+
+  /* Fixed chrome heights, referenced by the editor grid. */
+  --h-titlebar: 40px;
+  --h-transport: 56px;
+  --h-keyboard: 116px;
+  --h-console: 132px;
+  --w-inspector: 296px;
+
+  --z-modal: 100;
+  --z-toast: 200;
+}
+
+/* Respect the OS reduced-motion setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast: 0ms;
+    --transition-med: 0ms;
+  }
+}
