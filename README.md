@@ -112,6 +112,25 @@ Logic lives in `unplugged-core` on purpose. It has no platform dependency, so it
 compiles for both Apple targets and its tests run anywhere; `src-tauri` stays thin
 because it is the part that cannot be compile-checked without a Mac.
 
+## Which build am I running?
+
+The editor titlebar shows version and short commit, amber with a `+` when the build came
+from a modified working tree. Same information in Settings → About, with the build time.
+
+This matters most for the plugin: Logic caches Audio Unit scans and keeps extensions alive
+in a separate hosting process, so a stamp visible in the window is the only reliable way to
+tell a fix that did not work from a fix that was never loaded.
+
+```bash
+scripts/install-plugin.sh     # build, install to ~/Applications, register, verify
+scripts/verify-plugin.sh      # what is installed / registered / visible to hosts
+```
+
+An AUv3 ships *inside* a container app — there is no plugin folder to copy a file into —
+and macOS only scans apps in locations Launch Services indexes, which does not dependably
+include `~/Documents`. The install script handles that, plus killing the extension host so
+a replaced build is actually picked up.
+
 ## Development
 
 ```bash

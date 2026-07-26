@@ -113,6 +113,7 @@ pub fn run() {
             commands::add_track,
             commands::delete_track,
             commands::projects_root,
+            commands::build_info,
             // Editor
             editor::open_project,
             editor::close_project,
@@ -172,6 +173,9 @@ pub fn run() {
             transcribe::capture_load_file,
             transcribe::capture_waveform,
             transcribe::capture_set_notes,
+            transcribe::capture_preview_play,
+            transcribe::capture_preview_stop,
+            transcribe::capture_preview_position,
             transcribe::capture_accept,
             transcribe::capture_cancel,
         ])

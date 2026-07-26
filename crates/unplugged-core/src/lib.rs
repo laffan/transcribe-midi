@@ -5,6 +5,7 @@
 //! The Tauri layer in `src-tauri` is a thin wrapper over this crate; logic belongs here.
 
 pub mod ai;
+pub mod build_info;
 pub mod command;
 pub mod error;
 pub mod model;
@@ -14,6 +15,7 @@ pub mod sequencer;
 pub mod smf;
 pub mod store;
 
+pub use build_info::BuildInfo;
 pub use error::{CoreError, Result};
 pub use model::{
     color_for_index, InstrumentRef, Note, Project, ProjectListError, ProjectListing,

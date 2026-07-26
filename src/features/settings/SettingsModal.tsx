@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Modal } from "../../components/Modal";
 import { api, errorMessage, isTauri } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { AiStatus, InputSettings, ModelInfo } from "../../lib/types";
+import type { AiStatus, BuildInfo, InputSettings, ModelInfo } from "../../lib/types";
 import type { Theme } from "../../lib/theme";
 import { setTheme } from "../../lib/theme";
 import "./SettingsModal.css";
@@ -386,6 +386,7 @@ function AiTab() {
 
 function AboutTab() {
   const [root, setRoot] = useState<string | null>(null);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -393,13 +394,27 @@ function AboutTab() {
       .projectsRoot()
       .then(setRoot)
       .catch((e) => setError(errorMessage(e)));
+    api.buildInfo().then(setBuild).catch(() => setBuild(null));
   }, []);
 
   return (
     <div className="settings__group">
       <div className="field">
-        <span className="field__label">Version</span>
-        <div className="mono">0.1.0 — Phase 7</div>
+        <span className="field__label">Build</span>
+        {/* Stamped at compile time, not read from disk. When the plugin and the app
+            disagree about which build is running, this is the side that cannot lie. */}
+        <div className="mono">
+          {build
+            ? `${build.version} · ${build.commit}${build.dirty ? " (modified)" : ""} · ${build.profile}`
+            : "…"}
+        </div>
+        {build?.dirty && (
+          <span className="field__hint">
+            Built from a working tree with uncommitted changes, so the commit above
+            identifies the last commit rather than exactly this code.
+          </span>
+        )}
+        {build?.built_at && <span className="field__hint mono">built {build.built_at}</span>}
       </div>
 
       <div className="field">

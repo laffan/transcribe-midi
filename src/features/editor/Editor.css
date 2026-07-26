@@ -484,3 +484,11 @@
 .inspector__shortcuts[open] > summary {
   margin-bottom: var(--space-2);
 }
+
+/*
+ * The build stamp. Quiet by default; amber when the build came from a modified working
+ * tree, because that is the case where the commit hash is a half-truth.
+ */
+.editor__build--dirty {
+  color: var(--warning);
+}

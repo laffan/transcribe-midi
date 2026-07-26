@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use unplugged_audio::{AudioEngine, CaptureBackend};
+use unplugged_audio::{AudioEngine, CaptureBackend, PreviewBackend};
 use unplugged_core::command::EditSession;
 use unplugged_core::recorder::Recorder;
 use unplugged_core::sequencer::Timeline;
@@ -109,6 +109,8 @@ pub struct AppState {
     /// Microphone input for Phase 7. Separate from `audio`: it is a different engine,
     /// started only while transcribing.
     pub mic: Box<dyn CaptureBackend>,
+    /// Plays a captured take back. You cannot judge a transcription you have not heard.
+    pub preview: Box<dyn PreviewBackend>,
     pub capture: crate::transcribe::SharedCapture,
     /// The AI proposal awaiting accept or reject.
     ///
@@ -128,6 +130,7 @@ impl AppState {
             input: Arc::new(Mutex::new(InputState::new())),
             ai_prefs: Mutex::new(crate::ai::AiPreferences::load(&app_data_dir)),
             mic: unplugged_audio::new_capture(),
+            preview: unplugged_audio::new_preview(),
             capture: Mutex::new(Default::default()),
             pending_ai: Mutex::new(None),
             data_dir: app_data_dir,

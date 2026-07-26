@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, isCommandError, onLiveNote, onPlayhead } from "../../lib/api";
 import { logger } from "../../lib/console";
 import type {
+  BuildInfo,
   EditorState,
   EditRequest,
   PlatformCapabilities,
@@ -10,6 +11,7 @@ import type {
 } from "../../lib/types";
 import { InterchangeBar } from "./InterchangeBar";
 import { HistoryStrip } from "./HistoryStrip";
+import { ListeningBar } from "./ListeningBar";
 import { type Pending, previewDiff } from "./pending";
 import { PromptBar } from "./PromptBar";
 import { ReviewBar } from "./ReviewBar";
@@ -62,6 +64,14 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     useProjectTempo: true,
     gridDivisor: 4,
   });
+  /**
+   * Which build this is.
+   *
+   * In the titlebar rather than only in Settings because once this runs as a plugin, this
+   * window is the entire UI — and "am I looking at the fix I just built?" is the question
+   * a cached Audio Unit scan makes impossible to answer any other way.
+   */
+  const [build, setBuild] = useState<BuildInfo | null>(null);
 
   // -- load ----------------------------------------------------------------
 
@@ -145,6 +155,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
 
   useEffect(() => {
     api.platformCapabilities().then(setCapabilities).catch(() => setCapabilities(null));
+    api.buildInfo().then(setBuild).catch(() => setBuild(null));
   }, []);
 
   useEffect(() => {
@@ -318,6 +329,10 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
           gridTicks(transcribeOptions, manifest?.ppq ?? 480),
         );
         setPending({ kind: "transcription", preview });
+        // Open the waveform straight away. For an AI edit the diff on the roll is the
+        // review; for a take, the waveform is — you cannot judge a transcription against
+        // a grid, only against the sound it came from.
+        setFineTuning(preview.notes.length > 0);
         if (preview.warning) logger.warn(preview.warning);
         else logger.info(`Transcribed ${preview.notes.length} notes`);
       } catch (error) {
@@ -530,6 +545,15 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         <div className="spacer" />
 
         <span className="editor__stat mono">{manifest.ppq} PPQ</span>
+        {build && (
+          <span
+            className={`editor__stat mono ${build.dirty ? "editor__build--dirty" : ""}`}
+            title={`${build.version} · ${build.commit}${build.dirty ? " (modified)" : ""} · ${build.profile} · built ${build.built_at}`}
+          >
+            {build.version} {build.commit}
+            {build.dirty ? "+" : ""}
+          </span>
+        )}
         <button
           className={`btn btn--ghost ${showConsole ? "btn--active" : ""}`}
           onClick={() => setShowConsole((v) => !v)}
@@ -692,7 +716,10 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                 options={transcribeOptions}
                 disabled={listening}
                 onChange={setTranscribeOptions}
-                onResult={(preview) => setPending({ kind: "transcription", preview })}
+                onResult={(preview) => {
+                  setPending({ kind: "transcription", preview });
+                  setFineTuning(preview.notes.length > 0);
+                }}
               />
 
               <hr className="inspector__rule" />
@@ -717,7 +744,15 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
       </main>
 
       <footer className="editor__bottom">
-        {pending ? (
+        {listening ? (
+          <ListeningBar
+            onStop={() => void toggleListen()}
+            onCancel={() => {
+              setListening(false);
+              void api.captureCancel().catch(() => {});
+            }}
+          />
+        ) : pending ? (
           <ReviewBar
             pending={pending}
             onApply={() => void applyPending()}

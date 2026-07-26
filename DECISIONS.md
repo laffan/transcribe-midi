@@ -1244,3 +1244,109 @@ only been exercised against an empty take in a browser, because the take comes f
 - [ ] Confirm the roll is read-only while a proposal is on screen, and editable again
       after Discard.
 - [ ] Confirm the history strip lists the chain and that undone steps stay visible, dimmed.
+
+---
+
+## Preview: hearing the take, and seeing it arrive
+
+Reported after the first real transcription — a hummed phrase, correctly transcribed —
+with the observation that there was no way to visualise or preview the audio before
+committing it. Two genuine gaps and one discoverability failure.
+
+### You could not hear the take
+
+The waveform editor drew the take from the first release, but there was no way to *play*
+it. That matters more than it sounds: accepting the notes and listening to the sampler
+tells you what the **transcriber** heard, not what you played, and the whole value of a
+transcription editor is comparing those two.
+
+`AudioPreview` is a third small `AVAudioEngine`, for the same reason capture has its own —
+a player node and an output is the entire graph, and reconfiguring the sequencer's engine
+to schedule a one-off buffer would mean touching a running engine for something unrelated
+to the project. Position comes from the player's own render time rather than a wall clock,
+so the drawn playhead tracks the audio instead of drifting against it.
+
+Clicking the waveform lane plays from there; clicking the pitch lane edits. Splitting the
+two by lane means the fastest way to check a suspicious note is to click just before it.
+
+### You could not see the take arrive
+
+A level meter tells you the input is alive. It does not tell you whether the phrase you
+just sang came through, and by the time the transcription appears it is too late to know
+whether a gap was you or the microphone.
+
+The listening bar draws the take as it accumulates. This cost almost nothing: the samples
+are already in Rust — `capture_poll` drains them there — so it is the same
+`capture_waveform` the editor uses, asked for repeatedly.
+
+### The editor was behind a secondary button
+
+"Fine-tune…" sat next to "Add to track", and a feature you have to find is a feature that
+does not exist. A transcription now **opens** the editor.
+
+The asymmetry with an AI edit is deliberate rather than an inconsistency. For an AI edit
+the diff on the roll *is* the review — you can read what changed at a glance. For a take
+the waveform is the review, because a transcription cannot be judged against a grid, only
+against the sound it came from.
+
+---
+
+## Phase 10 groundwork — knowing which build you are running
+
+Two things the plugin needs before it exists, both of which are the difference between an
+hour of debugging and a minute of it.
+
+### The build stamps itself
+
+In a standalone app "which build is this?" is answered by quitting and looking. In a
+plugin it is genuinely hard: Logic caches Audio Unit scans, keeps the extension alive in a
+separate hosting process, and will happily run a copy you replaced ten minutes ago.
+Without a stamp visible **inside the plugin window** there is no way to tell a fix that did
+not work from a fix that was never loaded.
+
+`BuildInfo` is baked in at compile time by `unplugged-core/build.rs` and shown in the
+editor titlebar and the About tab. The load-bearing field is `dirty`: "did my edit make it
+in?" is the actual question, and a clean hash matching the last commit answers it wrongly
+when the build came from a modified tree. A dirty build gets a `+` and turns amber.
+
+The build script degrades rather than failing — no git, or a source tarball, still
+compiles and still reports something. A build script that can break the build over a
+cosmetic string is a bad trade. `SOURCE_DATE_EPOCH` is honoured for reproducible builds.
+
+### Installing from a Documents folder does not work, and the reason is not obvious
+
+An AUv3 is an app extension: it ships *inside* a container app and macOS discovers it by
+scanning the app, not by scanning a plugin folder. There is no
+`~/Library/Audio/Plug-Ins/Components/` to drop a file into — that is the AUv2 world. What
+actually happens is Launch Services notices an app bundle somewhere it indexes,
+`pluginkit` registers the extensions inside it, and hosts ask the system for Audio Units.
+
+The first step is where a build in `~/Documents` fails. Launch Services indexes
+`/Applications` and `~/Applications` reliably; a Documents folder is scanned
+inconsistently and a build directory is not scanned at all.
+
+`scripts/install-plugin.sh` therefore builds, copies to `~/Applications` with `ditto` (not
+`cp -r`, which can break a signature), clears any quarantine flag, registers with
+`lsregister`, and launches once — the launch is what actually makes `pluginkit` see the
+extension; headless registration alone is unreliable.
+
+It also **kills the extension host**. macOS keeps AUv3 extensions alive in
+`AUHostingCompatibilityService` between uses, and replacing the bundle underneath one does
+not evict it. This is the step people skip and then spend an hour confused by, and it is
+precisely the failure the build stamp exists to make visible.
+
+`scripts/verify-plugin.sh` answers "which build will Logic load right now?" by printing
+three things that can disagree: what is installed, what `pluginkit` has registered, and
+what `auval` says a host will be offered. When a fix "does not work" it is usually because
+those are out of step — most often an old extension still registered from a copy that has
+since been deleted, which is why the script also runs `mdfind` for stray copies. It ends
+by echoing this checkout's HEAD for comparison against the stamp in the window.
+
+### Why the extension target itself is not in this commit
+
+Writing an Xcode project and an AUv3 target blind is the one part of this that would
+predictably cost several rounds. The first Mac build of a *much* smaller amount of Swift
+took four, and each round is a full round trip. The tooling above is the thing that makes
+those rounds survivable — without the stamp, a round where the plugin did not reload is
+indistinguishable from a round where the fix was wrong — so it is worth having in place
+first rather than discovering the need halfway through.

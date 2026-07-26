@@ -7,6 +7,7 @@
 
 pub mod backend;
 pub mod capture;
+pub mod preview;
 pub mod shared;
 
 use std::ffi::c_void;
@@ -17,6 +18,7 @@ use unplugged_core::Ticks;
 
 pub use backend::{AudioBackend, AudioError, AudioResult, NullBackend};
 pub use capture::{decode_file, new_capture, CaptureBackend, NullCapture};
+pub use preview::{new_preview, NullPreview, PreviewBackend};
 pub use shared::{AudioCursor, SharedTransport};
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]

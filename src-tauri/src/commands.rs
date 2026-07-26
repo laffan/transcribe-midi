@@ -11,6 +11,17 @@ use unplugged_core::{Project, ProjectManifest, TimeSignature, TrackMeta};
 use crate::error::CommandResult;
 use crate::state::AppState;
 
+/// Which build is this?
+///
+/// Trivial in a standalone app, genuinely hard in a plugin — Logic caches Audio Unit
+/// scans, keeps the extension alive in a separate hosting process, and will happily run a
+/// copy you replaced ten minutes ago. Stamped at compile time and shown in the UI, so the
+/// answer comes from the running code rather than from what is installed on disk.
+#[tauri::command]
+pub fn build_info() -> unplugged_core::BuildInfo {
+    unplugged_core::BuildInfo::get()
+}
+
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppState>) -> CommandResult<ProjectListing> {
     Ok(state.store.list_with_errors()?)

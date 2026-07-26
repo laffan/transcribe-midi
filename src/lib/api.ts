@@ -17,6 +17,7 @@ import type {
   AiProposal,
   AiStatus,
   AiTarget,
+  BuildInfo,
   Note,
   WaveformPeaks,
   CommandError,
@@ -93,6 +94,7 @@ export const api = {
     call<void>("delete_track", { projectId, trackId }),
 
   projectsRoot: () => call<string>("projects_root"),
+  buildInfo: () => call<BuildInfo>("build_info"),
 
   // --- Editor (phase 3) ----------------------------------------------------
 
@@ -194,6 +196,10 @@ export const api = {
   captureWaveform: (fromSeconds: number, toSeconds: number, buckets: number) =>
     call<WaveformPeaks>("capture_waveform", { fromSeconds, toSeconds, buckets }),
   captureSetNotes: (notes: Note[]) => call<number>("capture_set_notes", { notes }),
+  capturePreviewPlay: (fromSeconds: number) =>
+    call<void>("capture_preview_play", { fromSeconds }),
+  capturePreviewStop: () => call<void>("capture_preview_stop"),
+  capturePreviewPosition: () => call<number | null>("capture_preview_position"),
   captureAccept: () => call<EditorState>("capture_accept"),
   captureCancel: () => call<void>("capture_cancel"),
 

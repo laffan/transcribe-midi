@@ -62,6 +62,8 @@ export function TranscribeEditor({
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag>({ type: "none" });
   const [busy, setBusy] = useState(false);
+  /** Where preview playback has reached, or null when stopped. */
+  const [playhead, setPlayhead] = useState<number | null>(null);
 
   const duration = Math.max(0.001, preview.duration_seconds);
   const { analysis } = preview;
@@ -100,6 +102,47 @@ export function TranscribeEditor({
       .then(setPeaks)
       .catch(() => setPeaks([]));
   }, [duration, size.width]);
+
+  // -- playback ------------------------------------------------------------
+  //
+  // Hearing the take is the point of this view. The sampler playing the transcription
+  // tells you what the transcriber heard; the take tells you what you played, and the
+  // comparison is what lets you decide whether a note is wrong.
+
+  const stopPreview = useCallback(() => {
+    void api.capturePreviewStop().catch(() => {});
+    setPlayhead(null);
+  }, []);
+
+  const playFrom = useCallback(
+    async (seconds: number) => {
+      try {
+        await api.capturePreviewPlay(Math.max(0, seconds));
+        setPlayhead(seconds);
+      } catch (e) {
+        logger.error("Could not play the take", errorMessage(e));
+        setPlayhead(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (playhead === null) return;
+    const timer = window.setInterval(() => {
+      api
+        .capturePreviewPosition()
+        .then((position) => setPlayhead(position))
+        .catch(() => setPlayhead(null));
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [playhead === null]);
+
+  // Never leave audio running because the view closed or the take was replaced.
+  useEffect(() => stopPreview, [stopPreview]);
+  useEffect(() => {
+    stopPreview();
+  }, [preview, stopPreview]);
 
   // -- geometry ------------------------------------------------------------
 
@@ -281,7 +324,19 @@ export function TranscribeEditor({
       }
       ctx.globalAlpha = 1;
     });
-  }, [size, peaks, notes, selected, analysis, pitchRange, xOf, yOf, noteRect]);
+
+    // ---- preview playhead ----
+    if (playhead !== null) {
+      const x = Math.round(xOf(playhead)) + 0.5;
+      ctx.strokeStyle = token("--playhead", "#d9a441");
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, size.height);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }, [size, peaks, notes, selected, analysis, pitchRange, playhead, xOf, yOf, noteRect]);
 
   // -- pointer -------------------------------------------------------------
 
@@ -326,6 +381,14 @@ export function TranscribeEditor({
 
   function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const { x, y } = localPoint(event);
+
+    // The waveform lane is for listening, the pitch lane is for editing. Clicking the
+    // waveform plays from there, which is the fastest way to check a particular moment.
+    if (y < WAVE_HEIGHT) {
+      void playFrom(secondsOf(x));
+      return;
+    }
+
     const hit = hitTest(x, y);
     canvasRef.current?.setPointerCapture(event.pointerId);
     setDrag(hit);
@@ -459,12 +522,19 @@ export function TranscribeEditor({
         </label>
 
         <span className="field__hint">
-          Drag a note to move it, its edges to change length. Edges snap to the detected
-          attacks. The line is the pitch that was actually measured.
+          Click the waveform to hear the take from there. Drag a note to move it, its edges
+          to change length — edges snap to the detected attacks. The line is the pitch that
+          was actually measured.
         </span>
 
         <div className="spacer" />
 
+        <button
+          className="btn"
+          onClick={() => (playhead === null ? void playFrom(0) : stopPreview())}
+        >
+          {playhead === null ? "▶ Play take" : "⏹ Stop"}
+        </button>
         <button className="btn" onClick={deleteSelected} disabled={selected === null}>
           Delete note
         </button>

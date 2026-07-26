@@ -309,6 +309,16 @@ export interface TranscriptionPreview {
 /** Min/max pairs for drawing a waveform. */
 export type WaveformPeaks = [number, number][];
 
+/** Mirrors `BuildInfo` in unplugged-core. */
+export interface BuildInfo {
+  version: string;
+  commit: string;
+  /** True when the build came from a working tree with uncommitted changes. */
+  dirty: boolean;
+  built_at: string;
+  profile: string;
+}
+
 export const MIN_TEMPO = 20;
 export const MAX_TEMPO = 300;
 export const DEFAULT_TEMPO = 120;
