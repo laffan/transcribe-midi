@@ -3,6 +3,10 @@ import "./Transport.css";
 
 interface TransportProps {
   playing: boolean;
+  recording: boolean;
+  inCountIn: boolean;
+  loopRegion: [number, number] | null;
+  metronome: boolean;
   positionTicks: number;
   tempoBpm: number;
   ppq: number;
@@ -14,6 +18,9 @@ interface TransportProps {
   redoLabel: string | null;
   onPlay: () => void;
   onStop: () => void;
+  onRecord: () => void;
+  onToggleLoop: () => void;
+  onToggleMetronome: () => void;
   onReturnToZero: () => void;
   onTempoChange: (bpm: number) => void;
   onUndo: () => void;
@@ -36,6 +43,10 @@ function formatPosition(ticks: number, ppq: number, ts: TimeSignature): string {
 
 export function Transport({
   playing,
+  recording,
+  inCountIn,
+  loopRegion,
+  metronome,
   positionTicks,
   tempoBpm,
   ppq,
@@ -47,6 +58,9 @@ export function Transport({
   redoLabel,
   onPlay,
   onStop,
+  onRecord,
+  onToggleLoop,
+  onToggleMetronome,
   onReturnToZero,
   onTempoChange,
   onUndo,
@@ -73,10 +87,43 @@ export function Transport({
         >
           {playing ? "⏹" : "▶"}
         </button>
+        <button
+          className={`btn btn--icon ${recording ? "btn--recording" : ""}`}
+          onClick={onRecord}
+          aria-label={recording ? "Stop recording" : "Record"}
+          aria-pressed={recording}
+          title={recording ? "Stop recording (R)" : "Record (R)"}
+        >
+          ●
+        </button>
+      </div>
+
+      <div className="transport__group">
+        <button
+          className={`btn btn--ghost ${loopRegion ? "btn--active" : ""}`}
+          onClick={onToggleLoop}
+          aria-pressed={loopRegion !== null}
+          title={
+            loopRegion
+              ? "Looping — click to turn off"
+              : "Loop the next two bars from the playhead"
+          }
+        >
+          Loop
+        </button>
+        <button
+          className={`btn btn--ghost ${metronome ? "btn--active" : ""}`}
+          onClick={onToggleMetronome}
+          aria-pressed={metronome}
+          title="Metronome"
+        >
+          Click
+        </button>
       </div>
 
       <div className="transport__position mono" aria-label="Playhead position">
         {formatPosition(positionTicks, ppq, timeSignature)}
+        {inCountIn && <span className="transport__countin">count-in</span>}
       </div>
 
       <label className="transport__tempo">

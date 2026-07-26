@@ -1,20 +1,18 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use unplugged_audio::AudioEngine;
 use unplugged_core::command::EditSession;
+use unplugged_core::recorder::Recorder;
 use unplugged_core::sequencer::Timeline;
-use unplugged_core::{Project, ProjectManifest, ProjectStore, Track};
+use unplugged_core::{Project, ProjectManifest, ProjectStore, Ticks, Track};
+use unplugged_midi::MidiInputHost;
 
 /// The project currently open in the editor.
-///
-/// Held in memory so that edits do not round-trip through disk on every keystroke. The
-/// manifest and the edit session are kept together because saving needs both.
 pub struct OpenProject {
     pub manifest: ProjectManifest,
     pub session: EditSession,
-    /// Set on any edit, cleared on save. Lets the UI show unsaved state and lets close
-    /// warn rather than silently discarding work.
+    /// Set on any edit, cleared on save.
     pub dirty: bool,
 }
 
@@ -43,15 +41,45 @@ impl OpenProject {
     }
 }
 
-/// Application state shared by every command.
+/// Live-input and recording state.
 ///
-/// The open project sits behind a `Mutex` because commands arrive from the webview on
-/// arbitrary threads. The audio engine does **not** — its shared transport is built from
-/// atomics precisely so the audio thread never waits on this lock.
+/// Separate from `OpenProject` because MIDI keeps arriving whether or not a project is
+/// open, and the callback thread must be able to take this lock without contending with
+/// the editor.
+#[derive(Default)]
+pub struct InputState {
+    /// Track index that live input and recording are routed to.
+    pub armed_track: u16,
+    /// Recording is armed and the transport is rolling past the count-in.
+    pub recording: bool,
+    pub recorder: Recorder,
+    /// Where the take began, so a cancelled take can rewind there.
+    pub record_start_tick: Ticks,
+    /// Bars of count-in before recording arms. Zero disables it.
+    pub count_in_bars: u8,
+    /// Velocity used by the on-screen keyboard.
+    pub keyboard_velocity: u8,
+    /// Notes currently sounding from live input, so they can be released on panic or
+    /// when the armed track changes underneath them.
+    pub sounding: Vec<(u16, u8, u8)>,
+}
+
+impl InputState {
+    pub fn new() -> Self {
+        InputState {
+            keyboard_velocity: 100,
+            ..Default::default()
+        }
+    }
+}
+
+/// Application state shared by every command.
 pub struct AppState {
     pub store: ProjectStore,
     pub audio: AudioEngine,
+    pub midi: MidiInputHost,
     pub open: Mutex<Option<OpenProject>>,
+    pub input: Arc<Mutex<InputState>>,
 }
 
 impl AppState {
@@ -59,7 +87,9 @@ impl AppState {
         AppState {
             store: ProjectStore::new(app_data_dir.join("projects")),
             audio,
+            midi: MidiInputHost::new(),
             open: Mutex::new(None),
+            input: Arc::new(Mutex::new(InputState::new())),
         }
     }
 }

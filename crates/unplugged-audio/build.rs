@@ -132,6 +132,15 @@ fn main() {
     }
     println!("cargo:rustc-link-lib=static=UnpluggedAudio");
 
+    // Phase 5 platform surface (share sheet, pasteboard, drag-out). Built by the
+    // same package, linked the same way.
+    let platform_lib = bin_path.join("libUnpluggedPlatform.a");
+    if platform_lib.is_file() {
+        println!("cargo:rustc-link-lib=static=UnpluggedPlatform");
+    } else {
+        println!("cargo:warning=libUnpluggedPlatform.a not found; sharing and drag-out will be unavailable");
+    }
+
     // The C target carries only declarations, so it may or may not be emitted as its own
     // archive depending on SwiftPM version. Link it only if it is there.
     let c_lib = bin_path.join("libCUnpluggedFFI.a");

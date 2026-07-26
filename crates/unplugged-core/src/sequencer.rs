@@ -17,6 +17,21 @@ use crate::model::{Project, Ticks};
 /// once; notes beyond it still play, they just are not tracked for the panic-off.
 pub const MAX_SOUNDING: usize = 512;
 
+/// Track index reserved for metronome clicks.
+///
+/// The audio backend routes this to its own dedicated sampler rather than a project
+/// track, so the click is never affected by track mute, solo or gain — and never turns
+/// up in an exported file.
+pub const METRONOME_TRACK: u16 = u16::MAX;
+
+/// Bar-start click. Higher than the off-beat so downbeats are unmistakable.
+pub const METRONOME_DOWNBEAT_PITCH: u8 = 84;
+pub const METRONOME_BEAT_PITCH: u8 = 76;
+pub const METRONOME_VELOCITY: u8 = 110;
+
+/// How long a click sounds, in ticks. Short enough to read as percussive at any tempo.
+const METRONOME_CLICK_TICKS: f64 = 30.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
     NoteOff,
@@ -174,6 +189,21 @@ pub struct Sequencer {
 
     loop_region: Option<(Ticks, Ticks)>,
     sounding: Vec<Sounding>,
+
+    metronome_enabled: bool,
+    /// Ticks per beat and beats per bar, from the project's time signature.
+    beat_ticks: u32,
+    beats_per_bar: u32,
+    /// Absolute sample position at which the sounding click is released, and its pitch.
+    click_off: Option<(f64, u8)>,
+
+    /// While the playhead is before this tick, timeline events are suppressed and only
+    /// the metronome sounds. `None` means no count-in is active.
+    count_in_until: Option<Ticks>,
+
+    /// Incremented on every loop wrap. The host polls this to tell the recorder to
+    /// close and reopen held notes — the audio thread cannot call into it directly.
+    wrap_count: u32,
 }
 
 impl Sequencer {
@@ -189,7 +219,37 @@ impl Sequencer {
             loop_region: None,
             // Preallocated so that `push` on the audio thread never allocates.
             sounding: Vec::with_capacity(MAX_SOUNDING),
+            metronome_enabled: false,
+            beat_ticks: ppq.max(1) as u32,
+            beats_per_bar: 4,
+            click_off: None,
+            count_in_until: None,
+            wrap_count: 0,
         }
+    }
+
+    /// Set the metronome grid from the project's time signature.
+    pub fn set_time_signature(&mut self, time_signature: crate::model::TimeSignature) {
+        self.beat_ticks = ((self.ppq as u32 * 4) / time_signature.denominator.max(1) as u32).max(1);
+        self.beats_per_bar = time_signature.numerator.max(1) as u32;
+    }
+
+    pub fn set_metronome(&mut self, enabled: bool) {
+        self.metronome_enabled = enabled;
+    }
+
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome_enabled
+    }
+
+    /// Suppress timeline events until `tick`, leaving only the metronome audible.
+    pub fn set_count_in_until(&mut self, tick: Option<Ticks>) {
+        self.count_in_until = tick;
+    }
+
+    /// True while the playhead is inside a count-in.
+    pub fn in_count_in(&self) -> bool {
+        matches!(self.count_in_until, Some(until) if self.position_ticks() < until)
     }
 
     // -- configuration ------------------------------------------------------
@@ -293,6 +353,11 @@ impl Sequencer {
         self.sounding.len()
     }
 
+    /// Monotonic (wrapping) count of loop wraps performed so far.
+    pub fn wrap_count(&self) -> u32 {
+        self.wrap_count
+    }
+
     // -- rendering ----------------------------------------------------------
 
     /// Produce every event that falls inside the next `frames` samples.
@@ -358,29 +423,125 @@ impl Sequencer {
         let window_start = self.position_samples;
         let window_end = window_start + segment as f64;
 
+        // During a count-in only the click sounds. The cursor still advances past any
+        // timeline events in the window, so playback picks up cleanly at the record
+        // point rather than replaying the count-in bars' worth of notes all at once.
+        let silent = self.count_in_active();
+
         while let Some(event) = self.timeline.events.get(self.next_event) {
             let event_samples = event.tick as f64 * spt;
             if event_samples >= window_end {
                 break;
             }
 
-            // An event slightly behind the cursor (possible right after a seek lands
-            // mid-tick) is emitted at offset 0 rather than dropped.
-            let offset_in_segment = (event_samples - window_start).max(0.0) as u32;
-            let frame_offset = buffer_offset + offset_in_segment.min(segment.saturating_sub(1));
+            if !silent {
+                // An event slightly behind the cursor (possible right after a seek lands
+                // mid-tick) is emitted at offset 0 rather than dropped.
+                let offset_in_segment = (event_samples - window_start).max(0.0) as u32;
+                let frame_offset = buffer_offset + offset_in_segment.min(segment.saturating_sub(1));
 
-            let event = *event;
-            self.track_sounding(event);
-            out.push(RenderedEvent {
-                frame_offset,
-                kind: event.kind,
-                track: event.track,
-                pitch: event.pitch,
-                velocity: event.velocity,
-                channel: event.channel,
-            });
+                let event = *event;
+                self.track_sounding(event);
+                out.push(RenderedEvent {
+                    frame_offset,
+                    kind: event.kind,
+                    track: event.track,
+                    pitch: event.pitch,
+                    velocity: event.velocity,
+                    channel: event.channel,
+                });
+            }
 
             self.next_event += 1;
+        }
+
+        self.emit_metronome(segment, buffer_offset, out);
+    }
+
+    fn count_in_active(&self) -> bool {
+        match self.count_in_until {
+            Some(until) => self.position_samples < until as f64 * self.samples_per_tick(),
+            None => false,
+        }
+    }
+
+    /// Emit metronome clicks for beats falling inside this segment.
+    ///
+    /// Windows are half-open `[start, end)`, so a beat landing exactly on a segment
+    /// boundary fires once — in the following segment — rather than twice. That matters
+    /// because a loop wrap splits a buffer into two segments.
+    fn emit_metronome(&mut self, segment: u32, buffer_offset: u32, out: &mut Vec<RenderedEvent>) {
+        let window_start = self.position_samples;
+        let window_end = window_start + segment as f64;
+        let last_frame = segment.saturating_sub(1);
+
+        // Release a click that started in an earlier buffer.
+        if let Some((off_at, pitch)) = self.click_off {
+            if off_at < window_end {
+                let offset = ((off_at - window_start).max(0.0) as u32).min(last_frame);
+                out.push(RenderedEvent {
+                    frame_offset: buffer_offset + offset,
+                    kind: EventKind::NoteOff,
+                    track: METRONOME_TRACK,
+                    pitch,
+                    velocity: 64,
+                    channel: 0,
+                });
+                self.click_off = None;
+            }
+        }
+
+        if !self.metronome_enabled {
+            return;
+        }
+
+        let spt = self.samples_per_tick();
+        let beat_samples = self.beat_ticks as f64 * spt;
+        // NaN would make the loop below never terminate, so the guard is written to
+        // reject it explicitly rather than relying on a negated comparison.
+        if !beat_samples.is_finite() || beat_samples <= 0.0 {
+            return;
+        }
+
+        let mut beat = (window_start / beat_samples).ceil() as i64;
+        loop {
+            let beat_at = beat as f64 * beat_samples;
+            if beat_at >= window_end {
+                break;
+            }
+            if beat_at < window_start {
+                beat += 1;
+                continue;
+            }
+
+            let downbeat = beat.rem_euclid(self.beats_per_bar.max(1) as i64) == 0;
+            let pitch = if downbeat { METRONOME_DOWNBEAT_PITCH } else { METRONOME_BEAT_PITCH };
+            let offset = ((beat_at - window_start).max(0.0) as u32).min(last_frame);
+
+            // A click still sounding from the previous beat is released first, so very
+            // fast tempi cannot stack clicks on the dedicated sampler.
+            if let Some((_, previous)) = self.click_off.take() {
+                out.push(RenderedEvent {
+                    frame_offset: buffer_offset + offset,
+                    kind: EventKind::NoteOff,
+                    track: METRONOME_TRACK,
+                    pitch: previous,
+                    velocity: 64,
+                    channel: 0,
+                });
+            }
+
+            out.push(RenderedEvent {
+                frame_offset: buffer_offset + offset,
+                kind: EventKind::NoteOn,
+                track: METRONOME_TRACK,
+                pitch,
+                velocity: METRONOME_VELOCITY,
+                channel: 0,
+            });
+            self.click_off = Some((beat_at + METRONOME_CLICK_TICKS * spt, pitch));
+
+            beat += 1;
         }
     }
 
@@ -391,6 +552,7 @@ impl Sequencer {
         // Anything still held would hang across the jump, because its note-off lives
         // after the loop end and we are about to skip past it.
         self.flush_sounding(buffer_offset, out);
+        self.wrap_count = self.wrap_count.wrapping_add(1);
         self.position_samples = loop_start as f64 * self.samples_per_tick();
         self.next_event = self.timeline.seek_index(loop_start);
     }
@@ -417,6 +579,10 @@ impl Sequencer {
     }
 
     /// Emit a note-off for everything currently sounding and clear the list.
+    ///
+    /// Includes any metronome click still ringing — otherwise stopping the transport
+    /// mid-click leaves the click hanging, which is the same stuck-note bug as for a
+    /// held note, just more annoying.
     fn flush_sounding(&mut self, frame_offset: u32, out: &mut Vec<RenderedEvent>) {
         for s in self.sounding.drain(..) {
             out.push(RenderedEvent {
@@ -426,6 +592,17 @@ impl Sequencer {
                 pitch: s.pitch,
                 velocity: 64,
                 channel: s.channel,
+            });
+        }
+
+        if let Some((_, pitch)) = self.click_off.take() {
+            out.push(RenderedEvent {
+                frame_offset,
+                kind: EventKind::NoteOff,
+                track: METRONOME_TRACK,
+                pitch,
+                velocity: 64,
+                channel: 0,
             });
         }
     }
@@ -761,6 +938,198 @@ mod tests {
         let second: Vec<_> = timeline.events().iter().filter(|e| e.track == 1).collect();
         assert_eq!(second.len(), 2);
         assert!(second.iter().all(|e| e.pitch == 72 && e.channel == 1));
+    }
+
+    // -- metronome ---------------------------------------------------------
+
+    fn clicks(out: &[RenderedEvent]) -> Vec<(u32, u8)> {
+        out.iter()
+            .filter(|e| e.track == METRONOME_TRACK && e.kind == EventKind::NoteOn)
+            .map(|e| (e.frame_offset, e.pitch))
+            .collect()
+    }
+
+    #[test]
+    fn the_metronome_clicks_on_every_beat() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default()); // 4/4
+        s.set_metronome(true);
+        s.play();
+
+        // 120 bpm, 480 ppq, 48 kHz: a beat is 24000 samples. One bar = 96000.
+        let mut out = Vec::new();
+        s.render(96_000, &mut out);
+
+        let offsets: Vec<u32> = clicks(&out).iter().map(|(o, _)| *o).collect();
+        assert_eq!(offsets, vec![0, 24_000, 48_000, 72_000]);
+    }
+
+    #[test]
+    fn the_downbeat_is_a_different_pitch_from_the_other_beats() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(96_000, &mut out);
+
+        let pitches: Vec<u8> = clicks(&out).iter().map(|(_, p)| *p).collect();
+        assert_eq!(
+            pitches,
+            vec![
+                METRONOME_DOWNBEAT_PITCH,
+                METRONOME_BEAT_PITCH,
+                METRONOME_BEAT_PITCH,
+                METRONOME_BEAT_PITCH
+            ]
+        );
+    }
+
+    #[test]
+    fn the_bar_length_follows_the_time_signature() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::new(3, 4).unwrap());
+        s.set_metronome(true);
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(6 * 24_000, &mut out); // two bars of 3/4
+
+        let downbeats: Vec<u32> = clicks(&out)
+            .iter()
+            .filter(|(_, p)| *p == METRONOME_DOWNBEAT_PITCH)
+            .map(|(o, _)| *o)
+            .collect();
+        assert_eq!(downbeats, vec![0, 3 * 24_000], "a downbeat every three beats");
+    }
+
+    #[test]
+    fn a_beat_on_a_buffer_boundary_clicks_exactly_once() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        s.play();
+
+        // Buffers of exactly one beat put every beat on a seam.
+        let mut total = 0;
+        let mut out = Vec::new();
+        for _ in 0..4 {
+            s.render(24_000, &mut out);
+            total += clicks(&out).len();
+        }
+        assert_eq!(total, 4, "no beat may be doubled or dropped at a seam");
+    }
+
+    #[test]
+    fn the_metronome_is_silent_when_disabled() {
+        let mut s = seq();
+        s.set_metronome(false);
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(96_000, &mut out);
+        assert!(clicks(&out).is_empty());
+    }
+
+    #[test]
+    fn every_click_is_released() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        s.play();
+
+        let mut ons = 0;
+        let mut offs = 0;
+        let mut out = Vec::new();
+        for _ in 0..40 {
+            s.render(4_800, &mut out); // 192000 samples total, two bars
+            ons += out.iter().filter(|e| e.track == METRONOME_TRACK && e.kind == EventKind::NoteOn).count();
+            offs += out.iter().filter(|e| e.track == METRONOME_TRACK && e.kind == EventKind::NoteOff).count();
+        }
+        assert!(ons >= 8, "expected at least two bars of clicks, got {ons}");
+        assert_eq!(ons, offs, "every click must be released or the sampler stacks voices");
+    }
+
+    #[test]
+    fn stopping_mid_click_releases_it() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(64, &mut out); // the click at beat 0 starts but has not ended
+        assert_eq!(clicks(&out).len(), 1);
+
+        s.stop(&mut out);
+        assert!(
+            out.iter().any(|e| e.track == METRONOME_TRACK && e.kind == EventKind::NoteOff),
+            "a click ringing at stop must be released"
+        );
+    }
+
+    #[test]
+    fn clicks_keep_firing_across_a_loop_wrap() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        s.set_loop_region(Some((0, 960))); // two beats
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(96_000, &mut out); // two full loop passes
+
+        // Beats at 0 and 24000 within each 48000-sample pass.
+        assert_eq!(clicks(&out).len(), 4, "the click must survive the wrap");
+    }
+
+    // -- count-in ----------------------------------------------------------
+
+    #[test]
+    fn count_in_suppresses_timeline_events_but_not_the_click() {
+        let mut s = seq();
+        s.set_time_signature(TimeSignature::default());
+        s.set_metronome(true);
+        // One bar of count-in: notes before tick 1920 must not sound.
+        s.set_count_in_until(Some(1920));
+        s.set_timeline(Timeline::new(vec![
+            ev(0, EventKind::NoteOn, 60),     // inside the count-in
+            ev(1920, EventKind::NoteOn, 72),  // at the record point
+        ]));
+        s.play();
+
+        let mut out = Vec::new();
+        s.render(96_000, &mut out); // exactly one bar
+
+        assert!(
+            !out.iter().any(|e| e.track != METRONOME_TRACK),
+            "no timeline event may sound during the count-in"
+        );
+        assert_eq!(clicks(&out).len(), 4, "but the click must play");
+
+        // Past the record point the timeline resumes.
+        out.clear();
+        s.render(4_800, &mut out);
+        assert!(
+            out.iter().any(|e| e.track != METRONOME_TRACK && e.pitch == 72),
+            "playback must resume at the record point"
+        );
+    }
+
+    #[test]
+    fn count_in_reports_its_own_state() {
+        let mut s = seq();
+        s.set_count_in_until(Some(1920));
+        s.play();
+        assert!(s.in_count_in());
+
+        let mut out = Vec::new();
+        s.render(96_000, &mut out); // one bar, landing exactly on the record point
+        assert!(!s.in_count_in(), "the count-in ends at the record point");
+
+        s.set_count_in_until(None);
+        assert!(!s.in_count_in());
     }
 
     #[test]

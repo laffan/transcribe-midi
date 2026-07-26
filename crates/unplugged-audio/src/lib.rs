@@ -126,6 +126,28 @@ impl AudioEngine {
         self.transport.loop_region()
     }
 
+    pub fn set_metronome(&self, enabled: bool) {
+        self.transport.set_metronome(enabled);
+    }
+
+    pub fn metronome_enabled(&self) -> bool {
+        self.transport.metronome_enabled()
+    }
+
+    /// Suppress timeline events until `tick`, leaving only the click audible.
+    pub fn set_count_in_until(&self, tick: Option<Ticks>) {
+        self.transport.set_count_in_until(tick);
+    }
+
+    pub fn in_count_in(&self) -> bool {
+        self.transport.in_count_in()
+    }
+
+    /// Wrapping count of loop wraps, polled by the host to drive the recorder.
+    pub fn wrap_count(&self) -> u32 {
+        self.transport.wrap_count()
+    }
+
     // -- live input ---------------------------------------------------------
 
     pub fn ensure_tracks(&self, count: usize) -> AudioResult<()> {

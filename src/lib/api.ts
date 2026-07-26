@@ -14,6 +14,14 @@ import type {
   CommandError,
   EditorState,
   EditRequest,
+  ExportPayload,
+  ImportPreview,
+  ImportResult,
+  InputSettings,
+  LiveNoteEvent,
+  MidiPort,
+  PlatformCapabilities,
+  RecordResult,
   Project,
   PlayheadEvent,
   ProjectListing,
@@ -105,6 +113,36 @@ export const api = {
   liveNoteOff: (track: number, pitch: number, channel: number) =>
     call<void>("live_note_off", { track, pitch, channel }),
   panic: () => call<void>("panic_all_notes_off"),
+
+  // --- Input and recording (phase 4) ---------------------------------------
+
+  inputSettings: () => call<InputSettings>("input_settings"),
+  midiPorts: () => call<MidiPort[]>("midi_ports"),
+  midiConnect: (portId: string) => call<MidiPort>("midi_connect", { portId }),
+  midiDisconnect: () => call<void>("midi_disconnect"),
+  midiSetChannel: (channel: number | null) => call<void>("midi_set_channel", { channel }),
+  setArmedTrack: (track: number) => call<void>("set_armed_track", { track }),
+  setKeyboardVelocity: (velocity: number) => call<void>("set_keyboard_velocity", { velocity }),
+  setCountInBars: (bars: number) => call<void>("set_count_in_bars", { bars }),
+  setMetronome: (enabled: boolean) => call<void>("set_metronome", { enabled }),
+  recordStart: () => call<RecordResult>("record_start"),
+  recordStop: () => call<EditorState>("record_stop"),
+  recordCancel: () => call<void>("record_cancel"),
+
+  // --- Interchange (phase 5) -----------------------------------------------
+
+  exportProjectSmf: () => call<ExportPayload>("export_project_smf"),
+  exportTrackSmf: (track: number) => call<ExportPayload>("export_track_smf", { track }),
+  writeExport: (path: string, bytes: number[]) => call<string>("write_export", { path, bytes }),
+  stageExport: (filename: string, bytes: number[]) =>
+    call<string>("stage_export", { filename, bytes }),
+  previewImport: (path: string) => call<ImportPreview>("preview_import", { path }),
+  importSmf: (path: string) => call<ImportResult>("import_smf", { path }),
+
+  copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
+  shareFile: (path: string) => call<void>("share_file", { path }),
+  beginFileDrag: (path: string) => call<void>("begin_file_drag", { path }),
+  platformCapabilities: () => call<PlatformCapabilities>("platform_capabilities"),
 };
 
 /**
@@ -121,4 +159,17 @@ export async function onPlayhead(
   }
   const unlisten = await listen<PlayheadEvent>("playhead", (event) => handler(event.payload));
   return unlisten;
+}
+
+/**
+ * Subscribe to live notes arriving from an external MIDI controller.
+ *
+ * For UI feedback only — the note has already sounded and been recorded in Rust by the
+ * time this fires. Nothing here is on the timing path.
+ */
+export async function onLiveNote(
+  handler: (event: LiveNoteEvent) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  return listen<LiveNoteEvent>("live-note", (event) => handler(event.payload));
 }

@@ -31,7 +31,7 @@ pub struct EditorState {
 }
 
 impl EditorState {
-    fn of(open: &OpenProject, affected: Vec<usize>, affected_track: usize) -> Self {
+    pub fn of(open: &OpenProject, affected: Vec<usize>, affected_track: usize) -> Self {
         EditorState {
             tracks: open.tracks().to_vec(),
             can_undo: open.session.can_undo(),

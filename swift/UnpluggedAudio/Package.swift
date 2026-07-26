@@ -15,6 +15,7 @@ let package = Package(
     ],
     products: [
         .library(name: "UnpluggedAudio", type: .static, targets: ["UnpluggedAudio"]),
+        .library(name: "UnpluggedPlatform", type: .static, targets: ["UnpluggedPlatform"]),
     ],
     targets: [
         .target(name: "CUnpluggedFFI"),
@@ -22,5 +23,8 @@ let package = Package(
             name: "UnpluggedAudio",
             dependencies: ["CUnpluggedFFI"]
         ),
+        // Phase 5: share sheet, pasteboard and drag-out. No dependency on the audio
+        // target — it is called from Rust the same way, but the two share nothing.
+        .target(name: "UnpluggedPlatform"),
     ]
 )

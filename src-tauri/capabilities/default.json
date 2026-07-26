@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core permissions for the main window. Phase 1 needs nothing beyond the default IPC surface — every filesystem operation goes through our own commands rather than a filesystem plugin, so the webview is never granted direct disk access.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Core permissions for the main window. File dialogs are the one place the webview reaches the OS directly; every filesystem read and write still goes through our own commands, so the dialog only ever hands back a path.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
 }

@@ -3,13 +3,15 @@
 A MIDI-sequencing DAW with AI-assisted editing, audio-to-MIDI transcription, a notation
 view, and AUv3 instrument hosting. macOS (aarch64) and iOS.
 
-> **Status: Phase 3 of 9.** Project CRUD, the audio engine and transport, the piano roll
-> and the undoable command layer are built. External MIDI input, import/export, AI
-> editing, transcription, notation and AUv3 hosting are not — each unbuilt panel is
-> labelled in the UI with the phase that fills it in.
+> **Status: Phase 5 of 9.** Project CRUD, the audio engine and transport, the piano roll
+> and undoable command layer, external MIDI input with loop recording, and SMF
+> import/export/sharing are built. AI editing, audio-to-MIDI transcription, the notation
+> view and AUv3 hosting are not — each unbuilt panel is labelled in the UI with the phase
+> that fills it in.
 >
-> **The Swift audio layer has never been compiled.** It was written on a Linux host with
-> no Xcode; see [DECISIONS.md](./DECISIONS.md) for exactly what that leaves unverified.
+> The audio engine has been verified making sound on real hardware. The Phase 4 and 5
+> Swift (MIDI input, share sheet, drag-out) has not — see [DECISIONS.md](./DECISIONS.md)
+> for exactly what that leaves unverified.
 
 ## Stack
 
@@ -37,7 +39,10 @@ crates/unplugged-core/   Domain model, sequencer, command layer, SMF, persistenc
                          Pure Rust, no Tauri, no platform code.
 crates/unplugged-audio/  Audio binding: one Rust-facing API, C ABI to Swift,
                          null backend off-Apple.
-swift/UnpluggedAudio/    AVAudioEngine graph + render callback. One package, both targets.
+crates/unplugged-midi/   External MIDI input (CoreMIDI), null backend off-Apple.
+swift/UnpluggedAudio/    AVAudioEngine graph + render callback, and the phase 5
+                         platform surface (share sheet, pasteboard, drag-out).
+                         One package, linked into both targets.
 src-tauri/               Tauri app: thin command wrappers.
 src/                     React frontend.
   lib/                   Typed API layer, theme, console store.
@@ -72,13 +77,13 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 89 tests (75 core + 14 audio)
+cargo test --workspace          # 140 tests (115 core + 14 audio + 7 midi + 4 app)
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
 # Compile-verify the Apple targets (no linking, but catches API breakage)
-cargo check -p unplugged-core -p unplugged-audio --target aarch64-apple-darwin
-cargo check -p unplugged-core -p unplugged-audio --target aarch64-apple-ios
+cargo check --workspace --exclude unplugged --target aarch64-apple-darwin
+cargo check --workspace --exclude unplugged --target aarch64-apple-ios
 ```
 
 ## Editor shortcuts
@@ -93,6 +98,7 @@ cargo check -p unplugged-core -p unplugged-audio --target aarch64-apple-ios
 | `⌫` | Delete selection |
 | `↑ ↓ ← →` | Nudge (`⇧` for an octave / a bar) |
 | `⌥`-click | Delete a note |
+| `R` | Record |
 | `A`–`L`, `W/E/T/Y/U` | Play the on-screen keyboard |
 | `Z` / `X` | Octave down / up |
 

@@ -489,3 +489,139 @@ succeeded before `AudioGraph.swift` failed, which means the whole FFI surface an
 declaration type-checked — including the C `uint8_t _pad[2]` → Swift `(UInt8, UInt8)`
 tuple import that item 6 above flagged as a risk. That narrows the remaining unknowns to
 runtime behaviour rather than API shape.
+
+---
+
+## Phase 4 — External MIDI input and loop recording
+
+### Timestamps come from our clock, always
+
+The Phase 0 decision made concrete. `crates/unplugged-midi` deliberately ignores the
+timestamp `midir` hands its callback — it is unpopulated on iOS, and a timing path that
+works on one platform and not the other is worse than one that is uniformly approximate.
+Every event is stamped with `audio.position_ticks()` at the moment it arrives, so macOS
+and iOS record identically.
+
+### The recorder is pure
+
+`unplugged_core::recorder` has no I/O and no platform types, so all 17 of its tests run
+here. Decisions inside it:
+
+- **A note held across the loop point is closed at the loop end and reopened at the loop
+  start.** Closing alone drops the sound from the top of the next pass, which is wrong
+  for a held pad. One continuous press therefore becomes one note per pass — unavoidable
+  in a bar-looped take, and what playback would sound like anyway.
+- **Pending note-ons are a queue per `(channel, pitch)`, not a slot.** A trill or a
+  sustained restrike presses the same pitch twice before the first release; a single slot
+  loses one of them.
+- **Quantisation is applied at capture, not afterwards**, so the take the player hears on
+  the next loop pass is the take that was recorded. It can push a start past its release,
+  so duration is derived defensively and never reaches zero.
+- Input is masked (`& 0x7F`, `& 0x0F`) on the way in, so a malformed packet cannot
+  produce a note the model would reject.
+
+The audio thread cannot call into the recorder, so loop wraps are published as a counter
+on `SharedTransport` and picked up by the playhead thread. Missing one would leave a held
+note running past the loop point in the take.
+
+### Metronome and count-in
+
+Both live in the sequencer, sample-accurate like everything else, and both are tested.
+
+- Clicks route to **`METRONOME_TRACK` (`u16::MAX`)**, which the Swift graph maps to its
+  own sampler chain outside the project track list. The click is therefore immune to
+  mute, solo and track gain, and can never end up in an exported file.
+- Windows are half-open, so a beat landing exactly on a segment boundary fires once — a
+  loop wrap splits a buffer into two segments, which is where a naive implementation
+  double-clicks.
+- Every click is released, including one still ringing when the transport stops. There is
+  a test asserting note-on and note-off counts match; a stuck click is the same bug as a
+  stuck note but more irritating.
+- **Count-in suppresses timeline events but still advances the cursor**, so playback picks
+  up cleanly at the record point instead of dumping the lead-in bars' notes at once.
+
+### Takes go through the command layer
+
+A finished take is one `Insert` transaction, so it is a single undo step — the same
+guarantee the spec demands of AI edits, for the same reason. Recording is not a special
+mutation path; there still is only one.
+
+---
+
+## Phase 5 — Import, export and sharing
+
+### Two SMF paths on purpose
+
+Storage is format 0 per track (Phase 1); interchange is **format 1 with a conductor
+track** carrying tempo, time signature and the project name — the layout Logic Pro and
+GarageBand expect. Single-track export and drag-out use format 0 *with* tempo included,
+because a bare note list opens at 120 bpm regardless of the project, which looks like a
+bug to the person who dragged it.
+
+**Imported timing is rescaled to the project's PPQ.** Files in the wild routinely use 96,
+192 or 960; without rescaling the material lands at the wrong tempo silently, which is
+worse than failing. A short note can round to zero going down, so duration is floored at
+one tick. The UI reports the rescale rather than doing it invisibly.
+
+The file's tempo is *reported*, not applied — overwriting the user's tempo setting because
+a dropped file disagreed with it is not the app's decision to make.
+
+### Platform surface
+
+`UnpluggedPlatform`, a second target in the same Swift package, same C ABI, same
+both-targets linkage. `platform_capabilities` reports what actually works so the UI never
+shows a Share button on macOS that fails when pressed.
+
+- **iOS share sheet** via `UIActivityViewController`. On iPad, omitting the popover source
+  rect is a hard crash, not a cosmetic issue, so a centred anchor is always supplied.
+- **macOS drag-out** via `NSDraggingSession`. A drag started from WKWebView's HTML5 API
+  does not carry a real file promise, so it has to begin in AppKit — this is what makes a
+  track droppable into Logic. It needs a live `NSEvent`; if the gesture has already ended
+  there is nothing to attach to, and that is reported rather than faked.
+- **Copy** puts the file on the pasteboard as both a URL and `public.midi-audio` data. The
+  UI says plainly that this pastes into Finder or Files, **not** as notes into Logic's
+  piano roll — that format is proprietary and the spec rules out reverse-engineering it.
+
+Exports are staged in the app cache directory so the OS can reclaim them and nothing
+litters the user's documents. Filenames are sanitised on the way in *and* again in
+`stage_export`, because the name makes a round trip through the webview in between.
+
+### What was verified
+
+- **140 Rust tests** (115 core, 14 audio, 7 midi, 4 tauri), clippy clean, both Apple
+  targets compile-check.
+- The phase 4/5 UI was driven in headless Chromium: record arm/disarm via button and the
+  `R` key, loop toggle with brackets drawn in the ruler, metronome toggle, the input
+  settings tab, and the interchange panel. Zero console errors, no overflow at 390px.
+
+### Not verified — needs hardware
+
+1. **Anything involving a real MIDI controller.** Port enumeration, connection, live
+   monitoring and recording have never seen a byte from actual hardware.
+2. Whether the metronome sampler sounds sensible with the default tone (pitches 84/76 are
+   a guess pending a real click sample).
+3. The share sheet, drag-out and pasteboard paths — all newly written Swift.
+4. iOS document types and Open-in-Place. **Not implemented**: the spec asks for `.mid`
+   files arriving from the share sheet and the launch/resume intent handling. That needs
+   `Info.plist` document-type registration in the generated Xcode project, which does not
+   exist until `tauri ios init` is run. Flagged rather than half-built.
+
+### What a human should test manually
+
+- [ ] Connect a controller; confirm it appears in Settings → Input and that playing it
+      sounds through the armed track.
+- [ ] Record a take without a count-in; confirm the notes land where they were played.
+- [ ] Set a 1-bar count-in and record: only the click during the lead-in, recording arms
+      at the playhead.
+- [ ] Turn the metronome on and confirm the downbeat is distinguishable, and that it stays
+      in step over a few minutes (a drifting click means the sample cursor is wrong).
+- [ ] Set a loop, record across the boundary holding a chord; confirm no note hangs and
+      that held notes appear at the top of the next pass.
+- [ ] Hit stop mid-click; confirm the click does not ring on.
+- [ ] Export the project, open it in Logic Pro; confirm tempo, time signature and track
+      names all arrive.
+- [ ] Drag a track from the inspector into Logic's arrange area.
+- [ ] Import a file at a different PPQ (96 or 960) and confirm the timing is right and the
+      console reports the rescale.
+- [ ] On iOS: share a track and confirm the sheet appears — **on an iPad especially**,
+      since that is the popover-anchor crash path.

@@ -15,6 +15,13 @@ import type {
   CommandError,
   EditorState,
   EditRequest,
+  ExportPayload,
+  ImportPreview,
+  ImportResult,
+  InputSettings,
+  MidiPort,
+  PlatformCapabilities,
+  RecordResult,
   Project,
   ProjectListing,
   ProjectManifest,
@@ -277,6 +284,101 @@ export const mockBackend = {
   live_note_on(_args: { track: number; pitch: number; velocity: number; channel: number }): void {},
   live_note_off(_args: { track: number; pitch: number; channel: number }): void {},
   panic_all_notes_off(): void {},
+
+  // --- Input and recording -------------------------------------------------
+  //
+  // No MIDI hardware in a browser tab, so ports are always empty. Recording state is
+  // tracked so the transport UI can be exercised; nothing is actually captured.
+
+  input_settings: (): InputSettings => ({ ...inputSettings, ports: [], connected: null }),
+  midi_ports: (): MidiPort[] => [],
+  midi_connect(_args: { portId: string }): MidiPort {
+    return fail("internal", "MIDI input is unavailable in the browser preview");
+  },
+  midi_disconnect(): void {},
+  midi_set_channel(args: { channel: number | null }): void {
+    inputSettings.channel = args.channel;
+  },
+  set_armed_track(args: { track: number }): void {
+    inputSettings.armed_track = args.track;
+  },
+  set_keyboard_velocity(args: { velocity: number }): void {
+    inputSettings.keyboard_velocity = args.velocity;
+  },
+  set_count_in_bars(args: { bars: number }): void {
+    inputSettings.count_in_bars = args.bars;
+  },
+  set_metronome(args: { enabled: boolean }): void {
+    inputSettings.metronome = args.enabled;
+  },
+  record_start(): RecordResult {
+    inputSettings.recording = true;
+    transport.play();
+    return { recording: true, count_in_ticks: 0, captured_notes: 0 };
+  },
+  record_stop(): EditorState {
+    inputSettings.recording = false;
+    transport.stop();
+    return requireEditor().state();
+  },
+  record_cancel(): void {
+    inputSettings.recording = false;
+    transport.stop();
+  },
+
+  // --- Interchange ---------------------------------------------------------
+
+  export_project_smf(): ExportPayload {
+    const e = requireEditor();
+    const count = e.tracks.reduce((n, t) => n + t.notes.length, 0);
+    // The preview cannot produce real SMF — that lives in Rust. A placeholder keeps the
+    // export flow clickable and is clearly labelled as such if it ever reaches disk.
+    return { filename: "preview.mid", bytes: Array.from(`unplugged-preview:${count}`, (c) => c.charCodeAt(0)) };
+  },
+  export_track_smf(args: { track: number }): ExportPayload {
+    const e = requireEditor();
+    const t = e.tracks[args.track];
+    return {
+      filename: `${t?.name ?? "track"}.mid`,
+      bytes: Array.from(`unplugged-preview:${t?.notes.length ?? 0}`, (c) => c.charCodeAt(0)),
+    };
+  },
+  write_export(args: { path: string }): string {
+    return args.path;
+  },
+  stage_export(args: { filename: string }): string {
+    return `/preview/${args.filename}`;
+  },
+  preview_import(): ImportPreview {
+    return fail("internal", "import is unavailable in the browser preview");
+  },
+  import_smf(): ImportResult {
+    return fail("internal", "import is unavailable in the browser preview");
+  },
+  copy_file_to_pasteboard(): void {},
+  share_file(): void {
+    fail("internal", "sharing is unavailable in the browser preview");
+  },
+  begin_file_drag(): void {
+    fail("internal", "drag-out is unavailable in the browser preview");
+  },
+  platform_capabilities: (): PlatformCapabilities => ({
+    share_sheet: false,
+    drag_out: false,
+    pasteboard: false,
+    save_dialog: false,
+  }),
+};
+
+const inputSettings: InputSettings = {
+  ports: [],
+  connected: null,
+  channel: null,
+  armed_track: 0,
+  keyboard_velocity: 100,
+  count_in_bars: 0,
+  metronome: false,
+  recording: false,
 };
 
 let editor: MockEditor | null = null;

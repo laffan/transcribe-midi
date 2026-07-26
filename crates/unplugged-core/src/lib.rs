@@ -7,6 +7,7 @@
 pub mod command;
 pub mod error;
 pub mod model;
+pub mod recorder;
 pub mod sequencer;
 pub mod smf;
 pub mod store;

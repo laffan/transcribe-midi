@@ -16,6 +16,10 @@ use arc_swap::ArcSwap;
 use unplugged_core::sequencer::{RenderedEvent, Sequencer, Timeline};
 use unplugged_core::Ticks;
 
+/// Sentinel for "no count-in". A real count-in target is a musical position, never
+/// anywhere near `u32::MAX` ticks, so this is unambiguous.
+const NO_COUNT_IN: u32 = u32::MAX;
+
 /// Packs a generation into the high 32 bits and a payload into the low 32.
 #[inline]
 fn pack(generation: u32, payload: u32) -> u64 {
@@ -48,6 +52,15 @@ pub struct SharedTransport {
     /// timing; it only observes this.
     position_ticks: AtomicU32,
     sounding: AtomicU32,
+
+    metronome: AtomicBool,
+    /// Tick before which the timeline is silent. `u32::MAX` means no count-in.
+    count_in_until: AtomicU32,
+    /// Published by the audio thread so the UI can show the lead-in.
+    in_count_in: AtomicBool,
+    /// Wrapping count of loop wraps, so the host can drive the recorder's
+    /// close-and-reopen without the audio thread calling into it.
+    wrap_count: AtomicU32,
 }
 
 impl Default for SharedTransport {
@@ -67,6 +80,10 @@ impl SharedTransport {
             loop_region: AtomicU64::new(0),
             position_ticks: AtomicU32::new(0),
             sounding: AtomicU32::new(0),
+            metronome: AtomicBool::new(false),
+            count_in_until: AtomicU32::new(NO_COUNT_IN),
+            in_count_in: AtomicBool::new(false),
+            wrap_count: AtomicU32::new(0),
         }
     }
 
@@ -116,6 +133,30 @@ impl SharedTransport {
         }
     }
 
+    pub fn set_metronome(&self, enabled: bool) {
+        self.metronome.store(enabled, Ordering::Release);
+    }
+
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome.load(Ordering::Acquire)
+    }
+
+    /// Suppress timeline events until `tick`, leaving only the click audible.
+    pub fn set_count_in_until(&self, tick: Option<Ticks>) {
+        self.count_in_until
+            .store(tick.unwrap_or(NO_COUNT_IN), Ordering::Release);
+    }
+
+    /// True while the playhead is inside a count-in.
+    pub fn in_count_in(&self) -> bool {
+        self.in_count_in.load(Ordering::Acquire)
+    }
+
+    /// Wrapping count of loop wraps. Compare against a previously observed value.
+    pub fn wrap_count(&self) -> u32 {
+        self.wrap_count.load(Ordering::Acquire)
+    }
+
     /// Playhead position, for the UI. Written by the audio thread.
     pub fn position_ticks(&self) -> Ticks {
         self.position_ticks.load(Ordering::Acquire)
@@ -147,6 +188,20 @@ impl SharedTransport {
         if region != cursor.last_loop {
             cursor.sequencer.set_loop_region(region);
             cursor.last_loop = region;
+        }
+
+        // Metronome and count-in.
+        let metronome = self.metronome_enabled();
+        if metronome != cursor.sequencer.metronome_enabled() {
+            cursor.sequencer.set_metronome(metronome);
+        }
+        let count_in = match self.count_in_until.load(Ordering::Acquire) {
+            NO_COUNT_IN => None,
+            tick => Some(tick),
+        };
+        if count_in != cursor.last_count_in {
+            cursor.sequencer.set_count_in_until(count_in);
+            cursor.last_count_in = count_in;
         }
 
         // Note data. Only re-seated when the generation actually moved, so the common
@@ -190,6 +245,10 @@ impl SharedTransport {
 
         self.position_ticks
             .store(cursor.sequencer.position_ticks(), Ordering::Release);
+        self.in_count_in
+            .store(cursor.sequencer.in_count_in(), Ordering::Release);
+        self.wrap_count
+            .store(cursor.sequencer.wrap_count(), Ordering::Release);
         self.sounding
             .store(cursor.sequencer.sounding_count() as u32, Ordering::Release);
     }
@@ -206,6 +265,7 @@ pub struct AudioCursor {
     last_loop: Option<(Ticks, Ticks)>,
     last_timeline_generation: u32,
     last_seek_generation: u32,
+    last_count_in: Option<Ticks>,
 }
 
 impl AudioCursor {
@@ -218,6 +278,7 @@ impl AudioCursor {
             last_loop: None,
             last_timeline_generation: 0,
             last_seek_generation: 0,
+            last_count_in: None,
         }
     }
 
@@ -227,6 +288,10 @@ impl AudioCursor {
 
     pub fn set_ppq(&mut self, ppq: u16) {
         self.sequencer.set_ppq(ppq);
+    }
+
+    pub fn set_time_signature(&mut self, ts: unplugged_core::TimeSignature) {
+        self.sequencer.set_time_signature(ts);
     }
 
     pub fn position_ticks(&self) -> Ticks {

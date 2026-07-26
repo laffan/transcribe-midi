@@ -53,6 +53,13 @@ public final class AudioGraph {
         let mixer: AVAudioMixerNode
     }
 
+    /// Reserved track index for metronome clicks. Must match `METRONOME_TRACK` in
+    /// crates/unplugged-core/src/sequencer.rs.
+    private static let metronomeTrack: UInt16 = UInt16.max
+    /// Its own chain, outside `tracks`, so mute, solo and track gain cannot silence
+    /// the click and it can never be routed into a project track.
+    private var metronome: TrackChain?
+
     public init() {
         eventBuffer = UnsafeMutablePointer<UnpluggedRenderedEvent>.allocate(
             capacity: Self.maxEventsPerBuffer
@@ -133,6 +140,9 @@ public final class AudioGraph {
             if tracks.isEmpty {
                 addTrackChain()
             }
+            if metronome == nil {
+                metronome = makeChain()
+            }
 
             if renderState == nil {
                 renderState = unplugged_audio_render_state_create(sampleRate, 480, 120.0)
@@ -186,6 +196,15 @@ public final class AudioGraph {
 
     @discardableResult
     private func addTrackChain() -> Bool {
+        tracks.append(makeChain())
+        return true
+    }
+
+    /// sampler -> per-track mixer (gain) -> main mixer.
+    ///
+    /// The per-track mixer exists from the start so Phase 9 can substitute a hosted AUv3
+    /// where the sampler sits without disturbing anything downstream.
+    private func makeChain() -> TrackChain {
         let sampler = AVAudioUnitSampler()
         let mixer = AVAudioMixerNode()
 
@@ -197,8 +216,7 @@ public final class AudioGraph {
         engine.connect(mixer, to: engine.mainMixerNode, format: format)
 
         loadDefaultInstrument(into: sampler)
-        tracks.append(TrackChain(sampler: sampler, mixer: mixer))
-        return true
+        return TrackChain(sampler: sampler, mixer: mixer)
     }
 
     /// Load the bundled instrument.
@@ -271,7 +289,7 @@ public final class AudioGraph {
     /// Split from the public entry point because `stop()` calls this from inside its own
     /// `graphQueue.sync` — re-entering `sync` on a serial queue deadlocks.
     private func allNotesOffLocked() {
-        for chain in tracks {
+        for chain in tracks + [metronome].compactMap({ $0 }) {
             for channel in UInt8(0)...UInt8(15) {
                 // CC 123 = All Notes Off. Sent on every channel because a track's notes
                 // may have been recorded on any of them.
@@ -338,10 +356,18 @@ public final class AudioGraph {
 
         for index in 0..<Int(count) {
             let event = eventBuffer[index]
-            let trackIndex = Int(event.track)
-            guard trackIndex < tracks.count else { continue }
 
-            guard let schedule = tracks[trackIndex].sampler.auAudioUnit.scheduleMIDIEventBlock else {
+            // The reserved index routes to the metronome chain rather than a project
+            // track; everything else is a track index.
+            let sampler: AVAudioUnitSampler?
+            if event.track == Self.metronomeTrack {
+                sampler = metronome?.sampler
+            } else {
+                let trackIndex = Int(event.track)
+                sampler = trackIndex < tracks.count ? tracks[trackIndex].sampler : nil
+            }
+
+            guard let schedule = sampler?.auAudioUnit.scheduleMIDIEventBlock else {
                 continue
             }
 

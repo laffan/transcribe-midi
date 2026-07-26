@@ -1,6 +1,9 @@
 mod commands;
 mod editor;
 mod error;
+mod input;
+mod interchange;
+mod platform;
 mod state;
 
 use std::time::Duration;
@@ -22,11 +25,13 @@ const PLAYHEAD_HZ: u64 = 30;
 struct PlayheadEvent {
     position_ticks: u32,
     playing: bool,
+    in_count_in: bool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -50,6 +55,7 @@ pub fn run() {
             std::thread::spawn(move || {
                 let interval = Duration::from_millis(1000 / PLAYHEAD_HZ);
                 let mut last_emitted: Option<PlayheadEvent> = None;
+                let mut last_wrap_count: u32 = 0;
 
                 loop {
                     std::thread::sleep(interval);
@@ -57,9 +63,21 @@ pub fn run() {
                     let Some(state) = handle.try_state::<AppState>() else {
                         continue;
                     };
+                    // The audio thread cannot call into the recorder, so loop wraps are
+                    // published as a counter and picked up here. Missing one would leave
+                    // a held note running past the loop point in the recorded take.
+                    let wraps = state.audio.wrap_count();
+                    if wraps != last_wrap_count {
+                        if let Some((start, end)) = state.audio.loop_region() {
+                            input::on_loop_wrap(&state, end, start);
+                        }
+                        last_wrap_count = wraps;
+                    }
+
                     let event = PlayheadEvent {
                         position_ticks: state.audio.position_ticks(),
                         playing: state.audio.is_playing(),
+                        in_count_in: state.audio.in_count_in(),
                     };
 
                     // Skip identical frames so a stopped transport is silent on the wire.
@@ -67,6 +85,7 @@ pub fn run() {
                         Some(previous) => {
                             previous.position_ticks != event.position_ticks
                                 || previous.playing != event.playing
+                                || previous.in_count_in != event.in_count_in
                         }
                         None => true,
                     };
@@ -111,6 +130,30 @@ pub fn run() {
             editor::live_note_on,
             editor::live_note_off,
             editor::panic_all_notes_off,
+            // Input and recording (phase 4)
+            input::input_settings,
+            input::midi_ports,
+            input::midi_connect,
+            input::midi_disconnect,
+            input::midi_set_channel,
+            input::set_armed_track,
+            input::set_keyboard_velocity,
+            input::set_count_in_bars,
+            input::set_metronome,
+            input::record_start,
+            input::record_stop,
+            input::record_cancel,
+            // Interchange (phase 5)
+            interchange::export_project_smf,
+            interchange::export_track_smf,
+            interchange::write_export,
+            interchange::stage_export,
+            interchange::preview_import,
+            interchange::import_smf,
+            platform::copy_file_to_pasteboard,
+            platform::share_file,
+            platform::begin_file_drag,
+            platform::platform_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Unplugged");

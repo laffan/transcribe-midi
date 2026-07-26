@@ -1,0 +1,17 @@
+[package]
+name = "unplugged-midi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "External MIDI input via CoreMIDI, with a null backend off-Apple."
+
+[dependencies]
+unplugged-core = { path = "../unplugged-core" }
+serde.workspace = true
+
+# Apple only. midir declares iOS as a first-class target (see DECISIONS.md Finding 1),
+# so one dependency covers both. It is deliberately not pulled in elsewhere: the ALSA
+# backend would drag in system dev packages that the Linux CI host does not need, and
+# nothing off-Apple ships anyway.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+midir = "0.11"

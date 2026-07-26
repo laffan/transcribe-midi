@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Modal } from "../../components/Modal";
 import { api, errorMessage, isTauri } from "../../lib/api";
+import { logger } from "../../lib/console";
+import type { InputSettings } from "../../lib/types";
 import type { Theme } from "../../lib/theme";
 import { setTheme } from "../../lib/theme";
 import "./SettingsModal.css";
@@ -86,17 +88,148 @@ function AppearanceTab({ theme, onThemeChange }: { theme: Theme; onThemeChange: 
 }
 
 function InputTab() {
+  const [settings, setSettings] = useState<InputSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      setSettings(await api.inputSettings());
+    } catch (error) {
+      logger.error("Could not read input settings", errorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function connect(portId: string) {
+    setBusy(true);
+    try {
+      if (portId === "") {
+        await api.midiDisconnect();
+        logger.info("MIDI input disconnected");
+      } else {
+        const port = await api.midiConnect(portId);
+        logger.info(`Connected to ${port.name}`);
+      }
+      await refresh();
+    } catch (error) {
+      logger.error("Could not change the MIDI port", errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!settings) {
+    return <p className="muted">Loading…</p>;
+  }
+
   return (
     <div className="settings__group">
-      <Pending
-        phase="Phase 4"
-        items={[
-          "MIDI input port",
-          "Input channel filter",
-          "Metronome level and sound",
-        ]}
-      />
-      <Pending phase="Phase 2" items={["On-screen keyboard velocity", "Audio output device (macOS)"]} />
+      <label className="field">
+        <span className="field__label">MIDI input</span>
+        <select
+          className="input"
+          value={settings.connected?.id ?? ""}
+          disabled={busy}
+          onChange={(e) => void connect(e.target.value)}
+        >
+          <option value="">None</option>
+          {settings.ports.map((port) => (
+            <option key={port.id} value={port.id}>
+              {port.name}
+            </option>
+          ))}
+        </select>
+        {settings.ports.length === 0 && (
+          <span className="field__hint">
+            No MIDI inputs found. Connect a controller and reopen this panel.
+          </span>
+        )}
+      </label>
+
+      <label className="field">
+        <span className="field__label">Input channel</span>
+        <select
+          className="input"
+          value={settings.channel ?? ""}
+          onChange={(e) => {
+            const value = e.target.value === "" ? null : Number(e.target.value);
+            setSettings({ ...settings, channel: value });
+            api.midiSetChannel(value).catch((error) =>
+              logger.error("Could not set the channel filter", errorMessage(error)),
+            );
+          }}
+        >
+          <option value="">All channels</option>
+          {Array.from({ length: 16 }, (_, i) => (
+            <option key={i} value={i}>
+              Channel {i + 1}
+            </option>
+          ))}
+        </select>
+        <span className="field__hint">
+          Most controllers send on channel 1, but not all — leave this on All unless
+          something is filtering incorrectly.
+        </span>
+      </label>
+
+      <label className="field">
+        <span className="field__label">Keyboard velocity</span>
+        <input
+          className="input"
+          type="range"
+          min={1}
+          max={127}
+          value={settings.keyboard_velocity}
+          onChange={(e) => {
+            const velocity = Number(e.target.value);
+            setSettings({ ...settings, keyboard_velocity: velocity });
+            api.setKeyboardVelocity(velocity).catch(() => {});
+          }}
+        />
+        <span className="field__hint mono">{settings.keyboard_velocity}</span>
+      </label>
+
+      <label className="field">
+        <span className="field__label">Count-in</span>
+        <select
+          className="input"
+          value={settings.count_in_bars}
+          onChange={(e) => {
+            const bars = Number(e.target.value);
+            setSettings({ ...settings, count_in_bars: bars });
+            api.setCountInBars(bars).catch(() => {});
+          }}
+        >
+          <option value={0}>Off</option>
+          <option value={1}>1 bar</option>
+          <option value={2}>2 bars</option>
+          <option value={4}>4 bars</option>
+        </select>
+        <span className="field__hint">
+          Only the click sounds during the lead-in; recording arms at the playhead.
+        </span>
+      </label>
+
+      <label className="field">
+        <span className="field__label">Metronome</span>
+        <select
+          className="input"
+          value={settings.metronome ? "on" : "off"}
+          onChange={(e) => {
+            const enabled = e.target.value === "on";
+            setSettings({ ...settings, metronome: enabled });
+            api.setMetronome(enabled).catch(() => {});
+          }}
+        >
+          <option value="off">Off</option>
+          <option value="on">On</option>
+        </select>
+      </label>
+
+      <Pending phase="Phase 9" items={["Audio output device (macOS)"]} />
     </div>
   );
 }

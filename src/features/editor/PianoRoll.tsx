@@ -42,6 +42,7 @@ interface PianoRollProps {
   onPreviewNote: (pitch: number) => void;
   playheadTicks: number;
   onScrub: (tick: number) => void;
+  loopRegion: [number, number] | null;
 }
 
 type Gesture =
@@ -63,6 +64,7 @@ export function PianoRoll({
   onPreviewNote,
   playheadTicks,
   onScrub,
+  loopRegion,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -289,6 +291,26 @@ export function PianoRoll({
       ctx.setLineDash([]);
     }
 
+    // ---- loop region ----
+    if (loopRegion) {
+      const [loopStart, loopEnd] = loopRegion;
+      const startX = Math.max(KEY_WIDTH, tickToX(loopStart, view));
+      const endX = Math.min(size.width, tickToX(loopEnd, view));
+
+      if (endX > startX) {
+        // A wash over the looped span, so it reads at a glance without obscuring notes.
+        ctx.fillStyle = "rgba(217,164,65,0.07)";
+        ctx.fillRect(startX, RULER_HEIGHT, endX - startX, rollHeight - RULER_HEIGHT);
+
+        ctx.fillStyle = playheadColor;
+        ctx.fillRect(startX, 0, 2, RULER_HEIGHT);
+        ctx.fillRect(endX - 2, 0, 2, RULER_HEIGHT);
+        ctx.globalAlpha = 0.35;
+        ctx.fillRect(startX, 0, endX - startX, RULER_HEIGHT);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // ---- playhead ----
     const playheadX = tickToX(playheadTicks, view);
     if (playheadX >= KEY_WIDTH && playheadX <= size.width) {
@@ -301,7 +323,7 @@ export function PianoRoll({
     }
   }, [
     size, rollHeight, view, track, selectionSet, ppq, timeSignature,
-    scrollTicks, pxPerTick, rowHeight, topPitch, snap, gesture, playheadTicks,
+    scrollTicks, pxPerTick, rowHeight, topPitch, snap, gesture, playheadTicks, loopRegion,
   ]);
 
   useEffect(() => {

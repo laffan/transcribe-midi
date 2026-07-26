@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, errorMessage, onPlayhead } from "../../lib/api";
+import { api, errorMessage, onLiveNote, onPlayhead } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { EditorState, EditRequest, ProjectManifest } from "../../lib/types";
+import type { EditorState, EditRequest, PlatformCapabilities, ProjectManifest } from "../../lib/types";
+import { InterchangeBar } from "./InterchangeBar";
 import { ConsolePanel } from "./ConsolePanel";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
 import { PianoRoll } from "./PianoRoll";
@@ -28,6 +29,13 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
   const [tempo, setTempo] = useState(120);
   const [showConsole, setShowConsole] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [inCountIn, setInCountIn] = useState(false);
+  const [loopRegion, setLoopRegion] = useState<[number, number] | null>(null);
+  const [metronome, setMetronome] = useState(false);
+  const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
+  /** Pitches currently held by an external controller, for keyboard feedback. */
+  const [liveNotes, setLiveNotes] = useState<Set<number>>(new Set());
 
   // -- load ----------------------------------------------------------------
 
@@ -68,6 +76,7 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
     onPlayhead((event) => {
       setPositionTicks(event.position_ticks);
       setPlaying(event.playing);
+      setInCountIn(event.in_count_in);
     })
       .then((fn) => {
         if (cancelled) fn();
@@ -79,6 +88,36 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
       cancelled = true;
       unlisten?.();
     };
+  }, []);
+
+  // External controller feedback. Purely cosmetic — the note has already sounded and
+  // been recorded in Rust by the time this arrives.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    onLiveNote((event) => {
+      setLiveNotes((prev) => {
+        const next = new Set(prev);
+        if (event.on) next.add(event.pitch);
+        else next.delete(event.pitch);
+        return next;
+      });
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    api.platformCapabilities().then(setCapabilities).catch(() => setCapabilities(null));
   }, []);
 
   // -- editing -------------------------------------------------------------
@@ -151,10 +190,69 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
     }
   }, []);
 
+  const toggleRecord = useCallback(async () => {
+    try {
+      if (recording) {
+        setEditor(await api.recordStop());
+        setRecording(false);
+        logger.info("Take committed — undo it like any other edit");
+      } else {
+        const result = await api.recordStart();
+        setRecording(result.recording);
+        if (result.count_in_ticks > 0) logger.info("Counting in…");
+      }
+    } catch (error) {
+      setRecording(false);
+      logger.error("Recording failed", errorMessage(error));
+    }
+  }, [recording]);
+
+  const toggleLoop = useCallback(async () => {
+    // Default to two bars from the playhead: a loop has to come from somewhere, and
+    // dragging brackets before there is anything to loop is more ceremony than it is
+    // worth. Once set, the region is visible in the ruler.
+    const next: [number, number] | null = loopRegion
+      ? null
+      : (() => {
+          const bar = (manifest!.ppq * 4 * manifest!.time_signature.numerator) /
+            manifest!.time_signature.denominator;
+          const start = Math.floor(positionTicks / bar) * bar;
+          return [start, start + bar * 2];
+        })();
+
+    try {
+      const state = await api.setLoopRegion(next);
+      setLoopRegion(state.loop_region);
+    } catch (error) {
+      logger.error("Could not set the loop", errorMessage(error));
+    }
+  }, [loopRegion, manifest, positionTicks]);
+
+  const toggleMetronome = useCallback(async () => {
+    const next = !metronome;
+    setMetronome(next);
+    try {
+      await api.setMetronome(next);
+    } catch (error) {
+      setMetronome(!next);
+      logger.error("Could not toggle the metronome", errorMessage(error));
+    }
+  }, [metronome]);
+
+  // Keep the armed track in step with the selected one, so recording lands where the
+  // user is looking rather than on whichever track was armed last.
+  useEffect(() => {
+    if (recording) return;
+    api.setArmedTrack(selectedTrack).catch(() => {});
+  }, [selectedTrack, recording]);
+
   // -- global shortcuts ----------------------------------------------------
 
   const playingRef = useRef(playing);
   playingRef.current = playing;
+  // Held in a ref so the key handler does not need re-binding on every state change.
+  const toggleRecordRef = useRef(toggleRecord);
+  toggleRecordRef.current = toggleRecord;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -180,6 +278,12 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
       if (mod && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void doSave();
+        return;
+      }
+
+      if (!mod && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        void toggleRecordRef.current();
       }
     }
 
@@ -356,6 +460,7 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
                 onPreviewNote={previewNote}
                 playheadTicks={positionTicks}
                 onScrub={seek}
+                loopRegion={loopRegion}
               />
             ) : (
               <p className="muted">No track selected.</p>
@@ -417,6 +522,18 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
 
               <hr className="inspector__rule" />
 
+              <InterchangeBar
+                trackIndex={selectedTrack}
+                trackName={track.name}
+                capabilities={capabilities}
+                onImported={(state) => {
+                  setEditor(state);
+                  setSelection([]);
+                }}
+              />
+
+              <hr className="inspector__rule" />
+
               <div className="placeholder placeholder--compact">
                 <span className="placeholder__phase">Phase 6</span>
                 <span className="placeholder__title">AI prompt</span>
@@ -438,6 +555,10 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
         <div className="editor__transport">
           <Transport
             playing={playing}
+            recording={recording}
+            inCountIn={inCountIn}
+            loopRegion={loopRegion}
+            metronome={metronome}
             positionTicks={positionTicks}
             tempoBpm={tempo}
             ppq={manifest.ppq}
@@ -449,6 +570,9 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
             redoLabel={editor.redo_label}
             onPlay={play}
             onStop={stop}
+            onRecord={toggleRecord}
+            onToggleLoop={toggleLoop}
+            onToggleMetronome={toggleMetronome}
             onReturnToZero={() => void seek(0)}
             onTempoChange={(bpm) => {
               setTempo(bpm);
@@ -466,6 +590,7 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
             channel={track?.channel ?? 0}
             onNoteOn={noteOn}
             onNoteOff={noteOff}
+            externalNotes={liveNotes}
           />
         </div>
       </footer>

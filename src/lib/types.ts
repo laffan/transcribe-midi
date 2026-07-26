@@ -126,6 +126,68 @@ export interface TransportState {
 export interface PlayheadEvent {
   position_ticks: number;
   playing: boolean;
+  in_count_in: boolean;
+}
+
+// --- Input and recording (phase 4) -----------------------------------------
+
+export interface MidiPort {
+  id: string;
+  name: string;
+}
+
+export interface InputSettings {
+  ports: MidiPort[];
+  connected: MidiPort | null;
+  channel: number | null;
+  armed_track: number;
+  keyboard_velocity: number;
+  count_in_bars: number;
+  metronome: boolean;
+  recording: boolean;
+}
+
+export interface RecordResult {
+  recording: boolean;
+  count_in_ticks: number;
+  captured_notes: number;
+}
+
+/** Live input arriving from an external controller, for UI feedback only. */
+export interface LiveNoteEvent {
+  pitch: number;
+  velocity: number;
+  on: boolean;
+}
+
+// --- Interchange (phase 5) -------------------------------------------------
+
+export interface ExportPayload {
+  filename: string;
+  bytes: number[];
+}
+
+export interface ImportPreview {
+  track_names: string[];
+  note_counts: number[];
+  source_ppq: number | null;
+  tempo_bpm: number | null;
+  time_signature: TimeSignature | null;
+  will_rescale: boolean;
+}
+
+export interface ImportResult {
+  editor: EditorState;
+  tracks_added: number;
+  notes_added: number;
+  rescaled_from: number | null;
+}
+
+export interface PlatformCapabilities {
+  share_sheet: boolean;
+  drag_out: boolean;
+  pasteboard: boolean;
+  save_dialog: boolean;
 }
 
 export const MIN_TEMPO = 20;

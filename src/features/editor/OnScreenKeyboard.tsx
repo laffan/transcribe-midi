@@ -37,9 +37,17 @@ interface OnScreenKeyboardProps {
   channel: number;
   onNoteOn: (pitch: number, velocity: number) => void;
   onNoteOff: (pitch: number) => void;
+  /** Pitches held by an external MIDI controller, shown alongside local presses. */
+  externalNotes?: Set<number>;
 }
 
-export function OnScreenKeyboard({ velocity, channel, onNoteOn, onNoteOff }: OnScreenKeyboardProps) {
+export function OnScreenKeyboard({
+  velocity,
+  channel,
+  onNoteOn,
+  onNoteOff,
+  externalNotes,
+}: OnScreenKeyboardProps) {
   // MIDI 48 = C3, so the default two octaves span C3–C5 around middle C.
   const [baseOctave, setBaseOctave] = useState(4);
   const [held, setHeld] = useState<Set<number>>(new Set());
@@ -144,6 +152,9 @@ export function OnScreenKeyboard({ velocity, channel, onNoteOn, onNoteOff }: OnS
 
   // -- layout --------------------------------------------------------------
 
+  /** A key is lit if it is held locally or by an external controller. */
+  const isHeld = (pitch: number) => held.has(pitch) || externalNotes?.has(pitch) === true;
+
   const pitches = Array.from({ length: VISIBLE_SEMITONES + 1 }, (_, i) => basePitch + i);
   const whites = pitches.filter((p) => !isBlackKey(p));
 
@@ -180,7 +191,7 @@ export function OnScreenKeyboard({ velocity, channel, onNoteOn, onNoteOff }: OnS
         {whites.map((pitch) => (
           <button
             key={pitch}
-            className={`keys__white ${held.has(pitch) ? "keys__white--on" : ""}`}
+            className={`keys__white ${isHeld(pitch) ? "keys__white--on" : ""}`}
             onPointerDown={(e) => {
               e.currentTarget.releasePointerCapture?.(e.pointerId);
               press(pitch);
@@ -204,7 +215,7 @@ export function OnScreenKeyboard({ velocity, channel, onNoteOn, onNoteOff }: OnS
           return (
             <button
               key={pitch}
-              className={`keys__black ${held.has(pitch) ? "keys__black--on" : ""}`}
+              className={`keys__black ${isHeld(pitch) ? "keys__black--on" : ""}`}
               style={{ left: `${left}%`, width: `${(1 / whites.length) * 100 * 0.62}%` }}
               onPointerDown={(e) => {
                 e.currentTarget.releasePointerCapture?.(e.pointerId);

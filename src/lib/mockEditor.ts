@@ -235,7 +235,7 @@ export class MockEditor {
 // Transport
 // ---------------------------------------------------------------------------
 
-type PlayheadListener = (event: { position_ticks: number; playing: boolean }) => void;
+type PlayheadListener = (event: { position_ticks: number; playing: boolean; in_count_in: boolean }) => void;
 
 /** Silent playhead simulation. No Web Audio — the spec rules it out for playback. */
 export class MockTransport {
@@ -269,7 +269,12 @@ export class MockTransport {
   }
 
   private emit(): void {
-    const event = { position_ticks: Math.floor(this.positionTicks), playing: this.playing };
+    const event = {
+      position_ticks: Math.floor(this.positionTicks),
+      playing: this.playing,
+      // The preview has no count-in; recording is Rust's job.
+      in_count_in: false,
+    };
     this.listeners.forEach((l) => l(event));
   }
 
