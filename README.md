@@ -15,11 +15,12 @@ did not type, so you need somewhere to *see* what arrived and fix the last five 
 that is what the editor is for. Every AI edit and every transcription is previewed as a
 diff before it is applied, and lands as a single undo step, for the same reason.
 
-> **Status: Phase 9 of 11.** Project CRUD, the audio engine and transport, the piano roll
+> **Status: Phase 10 of 11, first pass.** Project CRUD, the audio engine and transport, the piano roll
 > and undoable command layer, external MIDI input with loop recording, SMF
 > import/export/sharing, AI-assisted editing, monophonic audio-to-MIDI and the
-> transcription editor are built. The AUv3 plugin (Phase 10) and the notation view
-> (Phase 11) are not.
+> transcription editor are built. A first pass at the AUv3 plugin exists — it follows the
+> host transport and sends a project's notes as MIDI, but does not yet host the editor.
+> The notation view (Phase 11) is not built.
 >
 > The audio engine has been verified making sound on real hardware. Nothing else written
 > in Swift has been compiled — MIDI input, the share sheet, drag-out, the Keychain and
@@ -99,6 +100,9 @@ swift/UnpluggedAudio/    AVAudioEngine graph + render callback, microphone captu
                          take playback, audio-file decoding, and the platform
                          surface (share sheet, pasteboard, drag-out, Keychain).
                          One package, both targets.
+crates/unplugged-plugin/ The C ABI the AUv3 extension links against. No Tauri.
+plugin/                  The AUv3 extension: audio unit, view, and the XcodeGen
+                         project it is built from.
 scripts/                 Build, install and verify the plugin.
 src-tauri/               Tauri app: thin command wrappers.
 src/                     React frontend.
@@ -124,6 +128,7 @@ in a separate hosting process, so a stamp visible in the window is the only reli
 tell a fix that did not work from a fix that was never loaded.
 
 ```bash
+brew install xcodegen         # the Xcode project is generated, not checked in
 scripts/install-plugin.sh     # build, install to ~/Applications, register, verify
 scripts/verify-plugin.sh      # what is installed / registered / visible to hosts
 ```
@@ -154,7 +159,7 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 273 tests
+cargo test --workspace          # 297 tests
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 

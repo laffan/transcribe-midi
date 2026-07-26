@@ -22,6 +22,9 @@
 # in `AUHostingCompatibilityService`, so without that step you replace the binary and keep
 # using the old one — the failure mode this whole script exists to prevent.
 #
+# Requires xcodegen (brew install xcodegen). The Xcode project is generated from
+# plugin/project.yml rather than checked in — a pbxproj is unreviewable in a diff.
+#
 # Usage:
 #   scripts/install-plugin.sh            # release build, install, register, verify
 #   scripts/install-plugin.sh --debug    # faster build, for iterating
@@ -30,7 +33,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="Unplugged.app"
+APP_NAME="Unplugged AU.app"
 INSTALL_DIR="$HOME/Applications"
 
 CONFIGURATION="release"
@@ -69,21 +72,35 @@ say "Installing Unplugged ${VERSION} (${COMMIT}), ${CONFIGURATION}"
 # Build
 # ---------------------------------------------------------------------------
 
-if [[ "$DO_BUILD" == "1" ]]; then
-  say "Building the frontend"
-  npm run build
+XCODE_CONFIG="Release"
+[[ "$CONFIGURATION" == "debug" ]] && XCODE_CONFIG="Debug"
 
-  say "Building the app"
-  if [[ "$CONFIGURATION" == "debug" ]]; then
-    npm run tauri build -- --debug
-  else
-    npm run tauri build
-  fi
+if [[ "$DO_BUILD" == "1" ]]; then
+  command -v xcodegen >/dev/null 2>&1 || die "xcodegen is not installed — brew install xcodegen"
+
+  say "Generating the Xcode project"
+  (cd "$REPO_ROOT/plugin" && xcodegen generate)
+
+  # The extension's pre-build script builds the Rust staticlib, so cargo is not run here.
+  say "Building the Audio Unit ($XCODE_CONFIG)"
+  xcodebuild \
+    -project "$REPO_ROOT/plugin/UnpluggedAU.xcodeproj" \
+    -scheme UnpluggedAUHost \
+    -configuration "$XCODE_CONFIG" \
+    -derivedDataPath "$REPO_ROOT/target/xcode" \
+    CODE_SIGN_IDENTITY=- \
+    build
 fi
 
-BUILT_APP="$(find "$REPO_ROOT/target" -maxdepth 4 -name "$APP_NAME" -type d 2>/dev/null | head -1)"
-[[ -n "$BUILT_APP" ]] || die "could not find $APP_NAME under target/ — build first, or drop --no-build"
+BUILT_APP="$REPO_ROOT/target/xcode/Build/Products/$XCODE_CONFIG/$APP_NAME"
+[[ -d "$BUILT_APP" ]] || die "could not find $APP_NAME at $BUILT_APP — build first, or drop --no-build"
 say "Built: $BUILT_APP"
+
+# The extension inside is what actually matters; a host bundle without one installs
+# cleanly and then does nothing, with no error anywhere to say why.
+EXTENSION="$BUILT_APP/Contents/PlugIns/UnpluggedAU.appex"
+[[ -d "$EXTENSION" ]] || die "no UnpluggedAU.appex inside the app — the extension was not embedded"
+say "Extension: $(basename "$EXTENSION")"
 
 # ---------------------------------------------------------------------------
 # Stop anything still running the old copy
@@ -94,8 +111,8 @@ say "Built: $BUILT_APP"
 # does not evict it.
 
 say "Stopping the app and any running extension host"
-osascript -e 'quit app "Unplugged"' 2>/dev/null || true
-pkill -x Unplugged 2>/dev/null || true
+osascript -e 'quit app "Unplugged AU"' 2>/dev/null || true
+pkill -x "Unplugged AU" 2>/dev/null || true
 # These come back on demand; killing them is how a replaced extension gets picked up.
 killall -9 AUHostingCompatibilityService 2>/dev/null || true
 killall -9 AudioComponentRegistrar 2>/dev/null || true

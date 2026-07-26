@@ -1,0 +1,92 @@
+# XcodeGen project for the AUv3 extension.
+#
+# A `project.yml` rather than a checked-in `.xcodeproj`: a pbxproj is 2000 lines of
+# generated XML with UUID cross-references, which is unreviewable in a diff and merges
+# badly. This file is the actual configuration, and `xcodegen` produces the project from
+# it — so a change to the build is a change you can read.
+#
+#   brew install xcodegen
+#   cd plugin && xcodegen generate
+#
+# `scripts/install-plugin.sh` does this for you.
+
+name: UnpluggedAU
+options:
+  bundleIdPrefix: com.unplugged.daw
+  deploymentTarget:
+    macOS: "12.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    # Apple silicon only, matching the rest of the project.
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+
+targets:
+  # The container app. An AUv3 cannot ship on its own — macOS discovers extensions by
+  # scanning apps — so even a plugin-only build needs a host bundle to live in.
+  #
+  # This is a *stub*: the real app is the Tauri build, and the intent is for the extension
+  # to be embedded in that instead. Until the Tauri build learns to embed an extension,
+  # this gives the plugin somewhere to live that can be built and loaded on its own.
+  UnpluggedAUHost:
+    type: application
+    platform: macOS
+    sources:
+      - path: Host
+    dependencies:
+      - target: UnpluggedAU
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unplugged.daw.AUHost
+        INFOPLIST_FILE: Support/HostInfo.plist
+        CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAUHost.entitlements
+        # Ad-hoc: a locally installed plugin does not need a paid team, and requiring one
+        # to iterate would be a poor trade.
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: YES
+        CODE_SIGNING_ALLOWED: YES
+
+  UnpluggedAU:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: UnpluggedAU
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unplugged.daw.AUv3
+        INFOPLIST_FILE: Support/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAU.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_OBJC_BRIDGING_HEADER: Support/UnpluggedPluginFFI.h
+        # The Rust staticlib, built by the pre-build script below.
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/../target/aarch64-apple-darwin/release
+          - $(SRCROOT)/../target/aarch64-apple-darwin/debug
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lunplugged_plugin
+    dependencies:
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
+      - sdk: CoreAudioKit.framework
+    preBuildScripts:
+      # Rust first, or the linker has nothing to find. `--target` is explicit because
+      # Xcode's environment can otherwise steer cargo at the host triple.
+      - name: Build the Rust staticlib
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+          cd "$SRCROOT/.."
+          if [ "$CONFIGURATION" = "Debug" ]; then
+            cargo build -p unplugged-plugin --target aarch64-apple-darwin
+          else
+            cargo build -p unplugged-plugin --target aarch64-apple-darwin --release
+          fi
+        basedOnDependencyAnalysis: false

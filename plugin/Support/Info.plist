@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The AUv3 extension's Info.plist.
+
+  Two dictionaries have to agree or the plugin silently does not appear:
+
+  - `NSExtension` tells the system this is an Audio Unit extension and which class builds
+    the unit (`AUAudioUnitFactory`).
+  - `AudioComponents` is what hosts actually read. A wrong `type`, or a `manufacturer`
+    that does not match the app's, and the component is registered but never offered.
+
+  `type` is `aumi` — a MIDI processor. Unplugged produces notes, not sound: in a host the
+  sound is whatever instrument you place after it, which is the point. Logic hosts this in
+  the MIDI FX slot of an instrument track.
+
+  `version` is an integer, not a string, and hosts cache aggressively against it. Bumping
+  it is one of the few things that reliably persuades Logic to re-scan — which is why the
+  build stamp in the plugin's own window exists rather than trusting this number.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Unplugged</string>
+	<key>CFBundleName</key>
+	<string>Unplugged</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.unplugged.daw.AUv3</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>AudioComponents</key>
+			<array>
+				<dict>
+					<key>name</key>
+					<string>Unplugged: Unplugged</string>
+					<key>description</key>
+					<string>Turns audio into MIDI and edits MIDI by description</string>
+					<key>factoryFunction</key>
+					<string>UnpluggedAU.UnpluggedAUViewController</string>
+					<key>manufacturer</key>
+					<string>Lffn</string>
+					<key>subtype</key>
+					<string>Unpl</string>
+					<key>type</key>
+					<string>aumi</string>
+					<key>version</key>
+					<integer>1</integer>
+					<key>sandboxSafe</key>
+					<true/>
+					<key>tags</key>
+					<array>
+						<string>MIDI</string>
+						<string>Effects</string>
+					</array>
+				</dict>
+			</array>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.AudioUnit-UI</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>UnpluggedAU.UnpluggedAUViewController</string>
+	</dict>
+</dict>
+</plist>

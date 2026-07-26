@@ -1350,3 +1350,142 @@ took four, and each round is a full round trip. The tooling above is the thing t
 those rounds survivable — without the stamp, a round where the plugin did not reload is
 indistinguishable from a round where the fix was wrong — so it is worth having in place
 first rather than discovering the need halfway through.
+
+---
+
+## Phase 10, first pass — the AUv3 extension
+
+### What this pass does and does not do
+
+**Does:** loads in Logic as a MIDI effect, follows the host's transport, and emits a
+project's notes as MIDI into whatever instrument follows it. Shows which build is running.
+
+**Does not:** host the editor. That needs the whole Tauri command surface re-homed behind
+a bridge that is not Tauri, and doing it in the same step as getting an extension to load
+at all would mean two unverified things failing together with no way to tell which broke.
+So the projects directory is shared: you author in the app, the plugin plays what you
+authored.
+
+That is a real product in its own right — a MIDI FX slot playing your part into Logic's
+instrument, in sync — rather than a stub that proves a build works.
+
+### Type `aumi`, and why
+
+A **MIDI processor**, not an instrument. Unplugged makes notes; in a host the sound is
+whatever instrument you place after it, which is the point of putting it there. Logic hosts
+this in the MIDI FX slot of an instrument track.
+
+The consequence, recorded when the format was chosen and still true: Ableton Live is
+believed not to host MIDI-effect plugins at all. If that holds, Live gets the
+instrument-plus-drag-out route and this is Logic-specific. It has not been checked against
+a real install.
+
+### Following the host's clock without stuttering
+
+The naive implementation — re-seat the sequencer from the host every block — does not work.
+Seeking flushes held notes, so a sustained note would re-trigger at the audio block rate.
+Trusting our own cursor once started is the opposite failure: it drifts, and misses every
+locate and cycle jump.
+
+`host_sync` advances normally and re-seats **only when the disagreement exceeds what normal
+playback could produce**. Ordinary advance keeps the two within a fraction of a block; a
+locate moves them much further. One threshold separates the cases, and it has two terms —
+a block-length term doubled for margin (or every block would seek) and a musical floor of a
+32nd note (or a small block would make the threshold collapse into the jitter). Starting
+and the first block always locate, because you locate *then* press play, and a plugin that
+resumed from where it stopped would play the wrong bar.
+
+It is pure decision logic with no audio and no platform, so the part most likely to be
+subtly wrong is exhaustively testable. Ten tests cover steady playback never re-seeking,
+locates and cycle jumps being followed, a stopped host being tracked while the playhead is
+dragged, and degenerate inputs not producing a zero or NaN threshold.
+
+### The App Group, and the silent failure it prevents
+
+A sandboxed app and a sandboxed extension get **separate containers**. The plugin cannot
+read what the app wrote unless both go through an App Group — and when they do not, the
+symptom is an empty project list with no error anywhere, indistinguishable from never
+having run the app.
+
+So `group.com.unplugged.daw` is declared in three places that must agree: the app's
+entitlements, the extension's, and the host stub's. The app now prefers the group container
+for its data directory and falls back to its own when the group is unavailable — an
+unsigned build, or a profile without the entitlement. The fallback is not a failure
+standalone; it only leaves the plugin with nothing to play, and the app says so on stderr.
+
+Existing projects are **copied**, not moved, the first time. This runs on a machine holding
+the only copy of someone's work: a failed move is unrecoverable, a failed copy costs disk.
+The original is left in place deliberately. That does leave two directories that can
+diverge, which is a wart to resolve once the shared location has proved itself — but the
+alternative risks the thing that must not be risked.
+
+Migration only ever runs into an *empty* destination. Merging two divergent project
+directories is a conflict-resolution problem, and guessing at it would lose work.
+
+### No panic crosses the boundary
+
+Every C entry point catches. Unwinding into Swift is undefined behaviour, and in a plugin
+the process it takes down is the user's DAW along with their unsaved session. A test walks
+every entry point with NULL arguments, because each one is reachable from Swift.
+
+The render path allocates nothing and locks nothing — it is called on the audio thread —
+and truncates rather than growing when a block produces more events than the caller's
+buffer holds. A test seeds 128 simultaneous notes against an 8-slot buffer to prove it.
+
+### A generated Xcode project
+
+`plugin/project.yml` with XcodeGen, rather than a checked-in `.xcodeproj`. A pbxproj is
+2000 lines of generated XML with UUID cross-references: unreviewable in a diff and
+miserable to merge. The yml is the actual configuration, so a change to the build is a
+change someone can read.
+
+The container app is a **stub**. macOS discovers an AUv3 by scanning apps, so the extension
+needs a bundle to live in, and the real Unplugged app is the Tauri build. Embedding the
+extension there is the next step; until then this lets the plugin be built, installed and
+loaded without waiting on it. The stub window says what it is rather than pretending to be
+the app.
+
+### What was verified
+
+- **297 Rust tests**, clippy clean, both Apple targets compile-check including the new
+  plugin crate.
+- The host follower, the C ABI's null-safety, state round-tripping, a session referencing a
+  deleted project still loading, the host tempo overriding the project's, and the render
+  path never overrunning the caller's buffer.
+
+### Not verified — all of it, on a Mac
+
+Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of likelihood:
+
+1. **The `AUAudioUnit` subclass.** `internalRenderBlock`, `musicalContextBlock` and
+   `transportStateBlock` signatures are the kind of API this project has already got wrong
+   once from memory (`audioUnit` vs `auAudioUnit`, Phase 2).
+2. **`AudioComponents` in the extension's Info.plist.** A wrong `type`, `subtype` or
+   `manufacturer` registers the component and then never offers it to a host — a failure
+   with no error message anywhere.
+3. **The bridging header.** An app-extension target reaching a Rust staticlib through
+   `SWIFT_OBJC_BRIDGING_HEADER` plus `OTHER_LDFLAGS`, which has more ways to go wrong than
+   it looks.
+4. **The App Group.** Needs a real signing identity to work at all; ad-hoc signing may not
+   grant it, in which case the project list is empty and the fallback path is what runs.
+5. Whether Logic offers `aumi` extensions from an ad-hoc-signed app at all.
+
+### What a human should test manually
+
+- [ ] `brew install xcodegen`, then `scripts/install-plugin.sh --debug`. Expect the first
+      run to fail somewhere in Swift; the compiler errors are the deliverable.
+- [ ] `scripts/verify-plugin.sh` — confirm the extension is embedded, `pluginkit` lists it,
+      and `auval -a` shows it.
+- [ ] `auval -v aumi Unpl Lffn` for a full validation pass.
+- [ ] In Logic: a software instrument track, MIDI FX slot, Unplugged. Confirm the window
+      opens and the build stamp matches `git rev-parse --short=7 HEAD`.
+- [ ] Confirm the project list is populated. If it is empty, the App Group is the first
+      thing to check — run the standalone app once first, and look for the "no App Group
+      container" line on its stderr.
+- [ ] Pick a project, press play in Logic, confirm notes reach the instrument.
+- [ ] Locate mid-playback and confirm the plugin follows without a stuck note.
+- [ ] Turn on Cycle and confirm the loop wrap does not hang a note.
+- [ ] Change Logic's tempo and confirm the part follows it rather than the project's.
+- [ ] Save the Logic project, reopen it, confirm the same Unplugged project is selected.
+- [ ] Delete that project in the app, reopen the Logic session, confirm it loads with
+      nothing selected rather than failing.

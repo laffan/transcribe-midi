@@ -15,7 +15,7 @@
 set -uo pipefail
 
 INSTALL_DIR="$HOME/Applications"
-APP="$INSTALL_DIR/Unplugged.app"
+APP="$INSTALL_DIR/Unplugged AU.app"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m warning:\033[0m %s\n' "$*" >&2; }
@@ -36,6 +36,13 @@ if [[ -d "$APP" ]]; then
   MODIFIED="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$APP")"
   ok "$APP"
   echo "     version $VERSION, build $BUILD, installed $MODIFIED"
+
+  # An app with no extension inside installs and registers cleanly and then does nothing.
+  if [[ -d "$APP/Contents/PlugIns/UnpluggedAU.appex" ]]; then
+    ok "extension embedded"
+  else
+    bad "no UnpluggedAU.appex inside — nothing will appear in any host"
+  fi
 else
   bad "nothing at $APP — run scripts/install-plugin.sh"
 fi
@@ -43,7 +50,7 @@ fi
 # Copies elsewhere are the usual cause of "I fixed it and nothing changed": macOS may have
 # registered a different one, and there is no indication in Logic which it picked.
 say "Other copies on this machine"
-OTHERS="$(mdfind -name 'Unplugged.app' 2>/dev/null | grep -v "^$APP$" || true)"
+OTHERS="$(mdfind -name 'Unplugged AU.app' 2>/dev/null | grep -v "^$APP$" || true)"
 if [[ -n "$OTHERS" ]]; then
   warn "more than one copy exists; macOS may have registered one of these instead"
   echo "$OTHERS" | sed 's/^/     /'

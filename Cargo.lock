@@ -4080,6 +4080,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "unplugged-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unplugged-core",
+]
+
+[[package]]
 name = "unplugged-transcribe"
 version = "0.1.0"
 dependencies = [

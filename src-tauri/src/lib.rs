@@ -5,6 +5,7 @@ mod error;
 mod input;
 mod interchange;
 mod platform;
+mod shared_container;
 mod state;
 mod transcribe;
 
@@ -35,8 +36,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            // Prefer the App Group container, so the AUv3 extension can read the same
+            // projects. Falls back to the app's own directory when the group is
+            // unavailable — that works fine standalone, it just leaves the plugin with
+            // nothing to play.
+            let location = shared_container::resolve(app.path().app_data_dir()?);
+            let data_dir = location.dir.clone();
             std::fs::create_dir_all(&data_dir)?;
+
+            if let Some(from) = &location.migrated_from {
+                eprintln!(
+                    "projects copied into the shared container from {}; the originals \
+                     were left in place",
+                    from.display()
+                );
+            }
+            if !location.shared_with_plugin {
+                eprintln!(
+                    "no App Group container — the AUv3 plugin will not see these projects"
+                );
+            }
 
             // A failure here must not stop the app from launching: the project picker
             // and the editor are still useful without sound, and reporting it in the

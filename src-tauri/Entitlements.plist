@@ -6,6 +6,10 @@
   usage description in Info.plist governs the prompt, but without this the prompt is
   never reached. `user-selected.read-write` covers Export and Import, which reach the
   filesystem only through a save or open panel.
+
+  The App Group must match plugin/Support/UnpluggedAU.entitlements exactly. It is what
+  lets the AUv3 extension read the projects this app writes — an extension otherwise gets
+  its own sandboxed container and sees an empty list with no error to explain why.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -18,5 +22,9 @@
     <true/>
     <key>com.apple.security.network.client</key>
     <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.unplugged.daw</string>
+    </array>
 </dict>
 </plist>

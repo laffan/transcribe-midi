@@ -183,3 +183,30 @@ private final class FileDragSource: NSObject, NSDraggingSource {
 }
 
 #endif
+
+/// Path of the App Group container the app shares with its AUv3 extension.
+///
+/// This is the whole reason the plugin can see anything. A sandboxed app and a sandboxed
+/// extension get separate containers; an App Group is the only thing that gives them a
+/// directory in common. Without it the plugin's project list is empty and there is no
+/// error anywhere to say why — it looks exactly like "the app has never run".
+///
+/// Returns a malloc'd C string (free with `unplugged_platform_string_free`), or NULL when
+/// the group is unavailable — an unsigned build, or a provisioning profile without the
+/// entitlement. NULL means "fall back to the app's own directory", which works fine for
+/// the standalone and simply leaves the plugin with nothing to play.
+@_cdecl("unplugged_platform_group_container")
+public func unplugged_platform_group_container(
+    _ cGroup: UnsafePointer<CChar>?
+) -> UnsafeMutablePointer<CChar>? {
+    guard let cGroup else { return nil }
+    let group = String(cString: cGroup)
+    guard !group.isEmpty else { return nil }
+
+    guard
+        let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    else {
+        return nil
+    }
+    return strdup(url.appendingPathComponent("Unplugged", isDirectory: true).path)
+}

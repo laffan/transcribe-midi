@@ -8,6 +8,7 @@ pub mod ai;
 pub mod build_info;
 pub mod command;
 pub mod error;
+pub mod host_sync;
 pub mod model;
 pub mod music;
 pub mod recorder;
@@ -16,6 +17,7 @@ pub mod smf;
 pub mod store;
 
 pub use build_info::BuildInfo;
+pub use host_sync::{HostFollower, HostSync, HostTransport};
 pub use error::{CoreError, Result};
 pub use model::{
     color_for_index, InstrumentRef, Note, Project, ProjectListError, ProjectListing,
