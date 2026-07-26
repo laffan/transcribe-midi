@@ -10,14 +10,18 @@
  * It is unreachable inside Tauri: `isTauri()` gates every call site.
  */
 
+import { MockEditor, MockTransport } from "./mockEditor";
 import type {
   CommandError,
+  EditorState,
+  EditRequest,
   Project,
   ProjectListing,
   ProjectManifest,
   TimeSignature,
   Track,
   TrackMeta,
+  TransportState,
 } from "./types";
 import { DEFAULT_PPQ } from "./types";
 
@@ -205,4 +209,82 @@ export const mockBackend = {
   projects_root(): string {
     return "(browser preview — projects are in localStorage, not on disk)";
   },
+
+  // --- Editor -------------------------------------------------------------
+
+  open_project(args: { id: string }): EditorState {
+    const store = read();
+    const project = store[args.id];
+    if (!project) fail("project_not_found", `no project with id '${args.id}'`);
+
+    openId = args.id;
+    editor = new MockEditor(project.tracks);
+    transport.setPpq(project.manifest.ppq);
+    transport.setTempo(project.manifest.tempo_bpm);
+    return editor.state();
+  },
+
+  close_project(): void {
+    transport.stop();
+    editor = null;
+    openId = null;
+  },
+
+  save_open_project(): EditorState {
+    const e = requireEditor();
+    const store = read();
+    const project = store[openId!];
+    if (project) {
+      project.tracks = e.tracks;
+      project.manifest.tracks = e.tracks.map((t) => metaOf(t));
+      project.manifest.modified_at_ms = Date.now();
+      write(store);
+    }
+    e.dirty = false;
+    return e.state();
+  },
+
+  editor_state(): EditorState {
+    return requireEditor().state();
+  },
+
+  apply_edit(args: { request: EditRequest }): EditorState {
+    return requireEditor().apply(args.request);
+  },
+
+  undo(): EditorState {
+    return requireEditor().undo();
+  },
+
+  redo(): EditorState {
+    return requireEditor().redo();
+  },
+
+  // --- Transport ----------------------------------------------------------
+
+  transport_play: (): TransportState => transport.play(),
+  transport_stop: (): TransportState => transport.stop(),
+  transport_seek: (args: { tick: number }): TransportState => transport.seek(args.tick),
+  transport_get: (): TransportState => transport.state(),
+  set_tempo: (args: { bpm: number }): TransportState => transport.setTempo(args.bpm),
+  set_loop_region: (args: { region: [number, number] | null }): TransportState =>
+    transport.setLoopRegion(args.region),
+
+  // --- Live input ---------------------------------------------------------
+  // Silent by design: the spec rules out Web Audio for playback, so the preview
+  // shows keys lighting up without pretending to be an instrument.
+
+  live_note_on(_args: { track: number; pitch: number; velocity: number; channel: number }): void {},
+  live_note_off(_args: { track: number; pitch: number; channel: number }): void {},
+  panic_all_notes_off(): void {},
 };
+
+let editor: MockEditor | null = null;
+let openId: string | null = null;
+export const mockTransport = new MockTransport();
+const transport = mockTransport;
+
+function requireEditor(): MockEditor {
+  if (!editor) fail("internal", "no project is open");
+  return editor;
+}

@@ -7,15 +7,20 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-import { mockBackend } from "./mockBackend";
+import { mockBackend, mockTransport } from "./mockBackend";
 import type {
   CommandError,
+  EditorState,
+  EditRequest,
   Project,
+  PlayheadEvent,
   ProjectListing,
   ProjectManifest,
   TimeSignature,
   TrackMeta,
+  TransportState,
 } from "./types";
 
 /** True when running inside a Tauri webview rather than a plain browser tab. */
@@ -72,4 +77,48 @@ export const api = {
     call<void>("delete_track", { projectId, trackId }),
 
   projectsRoot: () => call<string>("projects_root"),
+
+  // --- Editor (phase 3) ----------------------------------------------------
+
+  openProject: (id: string) => call<EditorState>("open_project", { id }),
+  closeProject: () => call<void>("close_project"),
+  saveOpenProject: () => call<EditorState>("save_open_project"),
+  editorState: () => call<EditorState>("editor_state"),
+  applyEdit: (request: EditRequest) => call<EditorState>("apply_edit", { request }),
+  undo: () => call<EditorState>("undo"),
+  redo: () => call<EditorState>("redo"),
+
+  // --- Transport (phase 2) -------------------------------------------------
+
+  transportPlay: () => call<TransportState>("transport_play"),
+  transportStop: () => call<TransportState>("transport_stop"),
+  transportSeek: (tick: number) => call<TransportState>("transport_seek", { tick }),
+  transportGet: () => call<TransportState>("transport_get"),
+  setTempo: (bpm: number) => call<TransportState>("set_tempo", { bpm }),
+  setLoopRegion: (region: [number, number] | null) =>
+    call<TransportState>("set_loop_region", { region }),
+
+  // --- Live input (phase 2) ------------------------------------------------
+
+  liveNoteOn: (track: number, pitch: number, velocity: number, channel: number) =>
+    call<void>("live_note_on", { track, pitch, velocity, channel }),
+  liveNoteOff: (track: number, pitch: number, channel: number) =>
+    call<void>("live_note_off", { track, pitch, channel }),
+  panic: () => call<void>("panic_all_notes_off"),
 };
+
+/**
+ * Subscribe to playhead updates.
+ *
+ * The frontend never drives timing — Rust's audio thread owns the clock and publishes
+ * position; this only observes it. Resolves to an unsubscribe function.
+ */
+export async function onPlayhead(
+  handler: (event: PlayheadEvent) => void,
+): Promise<() => void> {
+  if (!isTauri()) {
+    return mockTransport.onPlayhead(handler);
+  }
+  const unlisten = await listen<PlayheadEvent>("playhead", (event) => handler(event.payload));
+  return unlisten;
+}

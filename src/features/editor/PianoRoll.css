@@ -1,0 +1,69 @@
+.roll {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-inset);
+}
+
+.roll__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.roll__control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.roll__control-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.roll__select {
+  height: 24px;
+  width: 74px;
+  font-size: var(--text-xs);
+}
+
+.roll__range {
+  width: 92px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.roll__hint {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.roll__canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.roll__canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  /* The canvas handles its own scroll and zoom via the wheel handler, so the browser
+     must not also pan or pinch it. */
+  touch-action: none;
+}

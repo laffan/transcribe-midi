@@ -94,9 +94,40 @@
 .editor__roll {
   flex: 1;
   min-height: 0;
-  padding: var(--space-3);
+  min-width: 0;
   background: var(--bg-inset);
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.editor__dirty {
+  color: var(--accent);
+  margin-left: var(--space-1);
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.inspector__shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.shortcuts dt {
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.shortcuts dd {
+  color: var(--text-2);
 }
 
 .editor__inspector {

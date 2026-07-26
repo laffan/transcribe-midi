@@ -4,8 +4,10 @@
 //! and its tests run on any host — including the Apple targets we cannot link on CI.
 //! The Tauri layer in `src-tauri` is a thin wrapper over this crate; logic belongs here.
 
+pub mod command;
 pub mod error;
 pub mod model;
+pub mod sequencer;
 pub mod smf;
 pub mod store;
 

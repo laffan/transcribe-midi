@@ -1,0 +1,10 @@
+[package]
+name = "unplugged-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Audio graph and transport binding. One Rust-facing API; one Swift implementation behind a C ABI."
+
+[dependencies]
+unplugged-core = { path = "../unplugged-core" }
+arc-swap = "1"

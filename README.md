@@ -3,9 +3,13 @@
 A MIDI-sequencing DAW with AI-assisted editing, audio-to-MIDI transcription, a notation
 view, and AUv3 instrument hosting. macOS (aarch64) and iOS.
 
-> **Status: Phase 1 of 9.** Project CRUD and persistence work. The piano roll, audio
-> engine, MIDI I/O and everything downstream are scaffolded but not built — each unbuilt
-> panel is labelled in the UI with the phase that fills it in.
+> **Status: Phase 3 of 9.** Project CRUD, the audio engine and transport, the piano roll
+> and the undoable command layer are built. External MIDI input, import/export, AI
+> editing, transcription, notation and AUv3 hosting are not — each unbuilt panel is
+> labelled in the UI with the phase that fills it in.
+>
+> **The Swift audio layer has never been compiled.** It was written on a Linux host with
+> no Xcode; see [DECISIONS.md](./DECISIONS.md) for exactly what that leaves unverified.
 
 ## Stack
 
@@ -29,12 +33,16 @@ achievable as written, and what was built instead.
 ## Layout
 
 ```
-crates/unplugged-core/   Domain model, SMF conversion, persistence. Pure Rust, no Tauri.
-src-tauri/               Tauri app: thin command wrappers over the core crate.
+crates/unplugged-core/   Domain model, sequencer, command layer, SMF, persistence.
+                         Pure Rust, no Tauri, no platform code.
+crates/unplugged-audio/  Audio binding: one Rust-facing API, C ABI to Swift,
+                         null backend off-Apple.
+swift/UnpluggedAudio/    AVAudioEngine graph + render callback. One package, both targets.
+src-tauri/               Tauri app: thin command wrappers.
 src/                     React frontend.
   lib/                   Typed API layer, theme, console store.
   features/projects/     Project picker (the launch screen).
-  features/editor/       Editor shell, track list, console panel.
+  features/editor/       Piano roll, transport, on-screen keyboard, console.
   features/settings/     Settings modal.
   styles/tokens.css      Design tokens — the single source of truth for colour and type.
 ```
@@ -64,14 +72,32 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 31 tests, all in unplugged-core
+cargo test --workspace          # 89 tests (75 core + 14 audio)
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
 # Compile-verify the Apple targets (no linking, but catches API breakage)
-cargo check -p unplugged-core --target aarch64-apple-darwin
-cargo check -p unplugged-core --target aarch64-apple-ios
+cargo check -p unplugged-core -p unplugged-audio --target aarch64-apple-darwin
+cargo check -p unplugged-core -p unplugged-audio --target aarch64-apple-ios
 ```
+
+## Editor shortcuts
+
+| | |
+|---|---|
+| `Space` | Play / stop |
+| `⌘Z` / `⇧⌘Z` | Undo / redo |
+| `⌘A` | Select all |
+| `⌘C` / `⌘X` / `⌘V` | Copy / cut / paste at playhead |
+| `⌘Q` | Quantize selection to the grid |
+| `⌫` | Delete selection |
+| `↑ ↓ ← →` | Nudge (`⇧` for an octave / a bar) |
+| `⌥`-click | Delete a note |
+| `A`–`L`, `W/E/T/Y/U` | Play the on-screen keyboard |
+| `Z` / `X` | Octave down / up |
+
+Click empty grid to draw a note; drag to marquee-select. `⌘`-scroll zooms about the
+pointer, `⇧`-scroll pans horizontally.
 
 ## Project format
 

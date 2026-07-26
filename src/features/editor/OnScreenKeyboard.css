@@ -1,0 +1,101 @@
+.keys {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.keys__controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.keys__octave {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+.keys__board {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 1px;
+  /* The keys handle their own pointer events; the browser must not pan or zoom. */
+  touch-action: none;
+}
+
+.keys__white {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: var(--space-1);
+  border: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--key-white);
+  color: #444;
+  font-size: 9px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.keys__white:hover {
+  background: #cfd4e0;
+}
+
+.keys__white--on {
+  background: var(--key-white-active);
+  color: #fff;
+}
+
+.keys__black {
+  position: absolute;
+  top: 0;
+  height: 62%;
+  /* Centred on the boundary between its neighbouring white keys. */
+  transform: translateX(-50%);
+  border: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--key-black);
+  border-left: 1px solid rgba(0, 0, 0, 0.4);
+  border-right: 1px solid rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  z-index: 1;
+  transition: background var(--transition-fast);
+}
+
+.keys__black:hover {
+  background: #2c313c;
+}
+
+.keys__black--on {
+  background: var(--key-black-active);
+}
+
+.keys__label {
+  pointer-events: none;
+}
+
+.keys__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .keys__meta {
+    display: none;
+  }
+}
