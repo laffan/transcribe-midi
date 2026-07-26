@@ -7,6 +7,13 @@
 //!
 //! **Monophonic only.** That is stated in the UI, not hidden: given a chord the pitch
 //! tracker returns one pitch, and pretending otherwise would produce confident nonsense.
+//!
+//! Phase 9 changed what happens to the audio. Phase 7 analysed a take and dropped it,
+//! which meant every setting was burned in at commit: decide the grid was wrong and your
+//! only option was to play it again. The take is now **retained for the session** so the
+//! waveform editor has something to draw and so the settings stay re-derivable. It is
+//! still not a recording: it is evidence attached to a take, not material in the
+//! arrangement — never mixed, bounced, exported, or written to disk.
 
 use std::sync::Mutex;
 
@@ -14,7 +21,7 @@ use serde::Serialize;
 use tauri::State;
 use unplugged_core::command::{Command, Transaction};
 use unplugged_core::Note;
-use unplugged_transcribe::{DetectedNote, TranscribeOptions, Transcription};
+use unplugged_transcribe::{Analysis, DetectedNote, TranscribeOptions, Transcription};
 
 use crate::editor::EditorState;
 use crate::error::{CommandError, CommandResult};
@@ -24,12 +31,23 @@ use crate::state::AppState;
 #[derive(Default)]
 pub struct CaptureState {
     pub recording: bool,
-    /// Captured mono samples. Dropped, never written to disk — recorded audio tracks are
-    /// explicitly out of scope, and the microphone exists only to feed this.
+    /// Captured mono samples, kept for as long as the take is open.
+    ///
+    /// In memory only. On-disk persistence is deliberately not here: two minutes at 48 kHz
+    /// is ~23 MB, and putting that in the project directory needs a schema bump, a size
+    /// budget and a lifecycle for takes whose notes were discarded. Recorded once and
+    /// fine-tuned in the same sitting is the shape of the work, so a session-scoped take
+    /// buys almost all of the value for none of that.
     pub samples: Vec<f32>,
     pub sample_rate: f64,
+    /// The take's analysis, kept alongside the audio so the editor can redraw without
+    /// re-running the pipeline.
+    pub analysis: Option<Transcription>,
     /// The transcription awaiting accept or reject, and the track it was aimed at.
     pub pending: Option<(usize, Vec<Note>)>,
+    /// Settings the current result was derived with, so re-deriving only needs the deltas.
+    pub use_project_tempo: bool,
+    pub quantize_ticks: u32,
 }
 
 pub type SharedCapture = Mutex<CaptureState>;
@@ -125,10 +143,16 @@ pub struct TranscriptionPreview {
     /// Set when the recording was too quiet or too unpitched to trust. The UI shows it
     /// rather than silently returning three notes from a room recording.
     pub warning: Option<String>,
+    /// The per-frame evidence, for the waveform editor to draw over.
+    pub analysis: Analysis,
+    /// Settings this result was derived with, so the editor's controls open in the state
+    /// that produced what is on screen.
+    pub use_project_tempo: bool,
+    pub quantize_ticks: u32,
 }
 
 impl TranscriptionPreview {
-    fn of(result: &Transcription) -> Self {
+    fn of(result: &Transcription, use_project_tempo: bool, quantize_ticks: u32) -> Self {
         // Thresholds are advisory: the notes are still returned and the user can accept
         // them. Refusing outright would be worse — sometimes a sparse take is exactly
         // what was played.
@@ -151,6 +175,9 @@ impl TranscriptionPreview {
             duration_seconds: result.duration_seconds,
             pitched_fraction: result.pitched_fraction,
             warning,
+            analysis: result.analysis.clone(),
+            use_project_tempo,
+            quantize_ticks,
         }
     }
 }
@@ -186,6 +213,18 @@ pub async fn capture_transcribe(
         ));
     }
 
+    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+}
+
+/// The shared body: analyse `samples`, store the result as the pending take.
+async fn transcribe_samples(
+    state: &State<'_, AppState>,
+    track: usize,
+    samples: Vec<f32>,
+    sample_rate: f64,
+    use_project_tempo: bool,
+    quantize_ticks: u32,
+) -> CommandResult<TranscriptionPreview> {
     let (ppq, channel, project_tempo) = {
         let guard = state
             .open
@@ -216,21 +255,134 @@ pub async fn capture_transcribe(
             .await
             .map_err(|e| CommandError::from(format!("transcription did not finish: {e}")))?;
 
-    let preview = TranscriptionPreview::of(&result);
+    let preview = TranscriptionPreview::of(&result, use_project_tempo, quantize_ticks);
 
     {
-        let mut capture = locked(&state)?;
-        // The audio has done its job. Dropping it here is the point at which "the
-        // microphone exists only to feed transcription" stops being a claim.
-        capture.samples = Vec::new();
+        let mut capture = locked(state)?;
+        // The samples stay. They are what the waveform editor draws and what a change of
+        // grid or tempo re-reads, and both of those are the point of this phase.
         capture.pending = if result.notes.is_empty() {
             None
         } else {
             Some((track, result.notes()))
         };
+        capture.use_project_tempo = use_project_tempo;
+        capture.quantize_ticks = quantize_ticks;
+        capture.analysis = Some(result);
     }
 
     Ok(preview)
+}
+
+/// Re-derive the current take with different settings.
+///
+/// The difference between this and `capture_transcribe` is only where the audio comes
+/// from — and that is the whole point. Changing the grid, or switching between the
+/// estimated tempo and the project's, used to mean playing the phrase again.
+#[tauri::command]
+pub async fn capture_retranscribe(
+    state: State<'_, AppState>,
+    use_project_tempo: bool,
+    quantize_ticks: u32,
+) -> CommandResult<TranscriptionPreview> {
+    let (samples, sample_rate, track) = {
+        let capture = locked(&state)?;
+        let track = capture
+            .pending
+            .as_ref()
+            .map(|(track, _)| *track)
+            .or_else(|| capture.analysis.as_ref().map(|_| 0))
+            .ok_or_else(|| CommandError::from("there is no take to re-read".to_string()))?;
+        (capture.samples.clone(), capture.sample_rate, track)
+    };
+
+    if samples.is_empty() || sample_rate <= 0.0 {
+        return Err(CommandError::from(
+            "the take is no longer available — record or open a file again".to_string(),
+        ));
+    }
+
+    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+}
+
+/// Load an audio file as the current take.
+///
+/// The microphone is not the main way audio arrives. A voice memo, a bounce, a stem
+/// someone sent — and, once this is a plugin, whatever the host hands over.
+#[tauri::command]
+pub async fn capture_load_file(
+    state: State<'_, AppState>,
+    path: String,
+    track: usize,
+    use_project_tempo: bool,
+    quantize_ticks: u32,
+) -> CommandResult<TranscriptionPreview> {
+    state.mic.stop();
+
+    let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
+        unplugged_audio::decode_file(&path)
+    })
+    .await
+    .map_err(|e| CommandError::from(format!("decoding did not finish: {e}")))?
+    .map_err(|e| CommandError {
+        code: "decode",
+        message: e.to_string(),
+    })?;
+
+    {
+        let mut capture = locked(&state)?;
+        capture.recording = false;
+        capture.samples = samples.clone();
+        capture.sample_rate = sample_rate;
+        capture.pending = None;
+    }
+
+    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+}
+
+/// Peaks over a window of the retained take, for drawing the waveform at any zoom.
+///
+/// Min/max per bucket rather than the whole buffer: sending two minutes of 48 kHz audio
+/// to the webview to draw one screen would be twenty megabytes for a few hundred pixels.
+#[tauri::command]
+pub fn capture_waveform(
+    state: State<'_, AppState>,
+    from_seconds: f64,
+    to_seconds: f64,
+    buckets: usize,
+) -> CommandResult<Vec<(f32, f32)>> {
+    let capture = locked(&state)?;
+    Ok(unplugged_transcribe::peaks(
+        &capture.samples,
+        capture.sample_rate,
+        from_seconds,
+        to_seconds,
+        buckets.min(4096),
+    ))
+}
+
+/// Replace the pending notes with ones the user adjusted in the editor.
+///
+/// Validated here rather than trusted: these arrive from the webview, and a note that
+/// breaks the model's invariants must not reach the command layer.
+#[tauri::command]
+pub fn capture_set_notes(state: State<'_, AppState>, notes: Vec<Note>) -> CommandResult<usize> {
+    for note in &notes {
+        note.validate()?;
+    }
+
+    let mut capture = locked(&state)?;
+    let track = capture
+        .pending
+        .as_ref()
+        .map(|(track, _)| *track)
+        .ok_or_else(|| CommandError::from("there is no transcription to adjust".to_string()))?;
+
+    let mut notes = notes;
+    notes.sort_by_key(Note::order_key);
+    let count = notes.len();
+    capture.pending = Some((track, notes));
+    Ok(count)
 }
 
 /// Commit the pending transcription as a single undoable insert.
@@ -264,6 +416,13 @@ pub fn capture_accept(state: State<'_, AppState>) -> CommandResult<EditorState> 
             "Transcribe",
             Command::Insert { track, notes },
         ))?;
+
+    // The take has become notes. Holding twenty-odd megabytes for a result the user has
+    // already committed would be the retention turning into a leak.
+    if let Ok(mut capture) = state.capture.lock() {
+        capture.samples = Vec::new();
+        capture.analysis = None;
+    }
     open.dirty = true;
     state.audio.set_timeline(open.timeline());
 
@@ -277,6 +436,7 @@ pub fn capture_cancel(state: State<'_, AppState>) -> CommandResult<()> {
     let mut capture = locked(&state)?;
     capture.recording = false;
     capture.samples = Vec::new();
+    capture.analysis = None;
     capture.pending = None;
     Ok(())
 }
@@ -298,22 +458,30 @@ mod tests {
 
     #[test]
     fn an_empty_result_is_reported_as_such() {
-        let preview = TranscriptionPreview::of(&Transcription {
-            tempo_bpm: 120.0,
-            ..Default::default()
-        });
+        let preview = TranscriptionPreview::of(
+            &Transcription {
+                tempo_bpm: 120.0,
+                ..Default::default()
+            },
+            true,
+            0,
+        );
         assert!(preview.warning.is_some());
         assert!(preview.notes.is_empty());
     }
 
     #[test]
     fn a_mostly_unpitched_recording_is_flagged_but_still_returned() {
-        let preview = TranscriptionPreview::of(&Transcription {
-            notes: vec![detected(60), detected(64)],
-            tempo_bpm: 120.0,
-            pitched_fraction: 0.05,
-            ..Default::default()
-        });
+        let preview = TranscriptionPreview::of(
+            &Transcription {
+                notes: vec![detected(60), detected(64)],
+                tempo_bpm: 120.0,
+                pitched_fraction: 0.05,
+                ..Default::default()
+            },
+            true,
+            120,
+        );
 
         assert!(preview.warning.is_some(), "the user should be told");
         assert_eq!(preview.notes.len(), 2, "but the notes are still offered");
@@ -321,15 +489,24 @@ mod tests {
 
     #[test]
     fn a_clean_recording_carries_no_warning() {
-        let preview = TranscriptionPreview::of(&Transcription {
-            notes: vec![detected(60)],
-            tempo_bpm: 120.0,
-            tempo_estimated: true,
-            tempo_confidence: 0.8,
-            duration_seconds: 4.0,
-            pitched_fraction: 0.7,
-        });
+        let preview = TranscriptionPreview::of(
+            &Transcription {
+                notes: vec![detected(60)],
+                tempo_bpm: 120.0,
+                tempo_estimated: true,
+                tempo_confidence: 0.8,
+                duration_seconds: 4.0,
+                pitched_fraction: 0.7,
+                analysis: Default::default(),
+            },
+            false,
+            240,
+        );
         assert!(preview.warning.is_none());
         assert!(preview.tempo_estimated);
+        // The settings come back with the result so the editor's controls open showing
+        // what actually produced what is on screen.
+        assert!(!preview.use_project_tempo);
+        assert_eq!(preview.quantize_ticks, 240);
     }
 }

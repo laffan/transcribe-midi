@@ -99,6 +99,9 @@
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  /* The first-run doors float over the grid rather than replacing it, so drawing a note
+     by hand stays one click away. */
+  position: relative;
 }
 
 .editor__dirty {
@@ -465,4 +468,19 @@
   .placeholder--inline .placeholder__detail {
     display: none;
   }
+}
+
+/*
+ * The shortcut list was outranking the two things the app is for. Collapsed by default —
+ * it is reference material, and reference material does not need to be the tallest thing
+ * in the inspector.
+ */
+.inspector__shortcuts > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: revert;
+}
+
+.inspector__shortcuts[open] > summary {
+  margin-bottom: var(--space-2);
 }

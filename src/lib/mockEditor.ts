@@ -52,6 +52,8 @@ export class MockEditor {
       can_redo: this.redoStack.length > 0,
       undo_label: this.undoLabels[this.undoLabels.length - 1] ?? null,
       redo_label: this.redoLabels[this.redoLabels.length - 1] ?? null,
+      history: [...this.undoLabels],
+      redo_history: [...this.redoLabels],
       dirty: this.dirty,
       affected: this.lastAffected,
       affected_track: this.lastTrack,

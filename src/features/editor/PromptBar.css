@@ -1,0 +1,74 @@
+/*
+ * The prompt bar spans the editor above the transport. Its prominence is the point: in an
+ * app where describing a change is the main way to make one, the input for that cannot be
+ * something you scroll a sidebar to find.
+ */
+.promptbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  min-width: 0;
+}
+
+.promptbar--setup {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.promptbar__scope {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.promptbar__target {
+  max-width: 180px;
+  font-size: var(--text-xs);
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.promptbar__input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font-family: var(--font-ui);
+  /* One line by default. It grows only if the user makes it grow with ⇧Return. */
+  line-height: 1.4;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.promptbar__hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.promptbar__error {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .promptbar {
+    flex-wrap: wrap;
+  }
+
+  .promptbar__input {
+    /* Below this width the select, the field and the button cannot share a row without
+       the field collapsing to nothing. */
+    flex-basis: 100%;
+    order: -1;
+  }
+}

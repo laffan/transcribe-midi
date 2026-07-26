@@ -120,7 +120,7 @@ impl ProjectStore {
             tempo_bpm,
             time_signature,
             ppq: DEFAULT_PPQ,
-            tracks: vec![new_track_meta(0)],
+            tracks: vec![TrackMeta::for_index(0)],
             created_at_ms: now,
             modified_at_ms: now,
         };
@@ -280,7 +280,7 @@ impl ProjectStore {
 
     pub fn add_track(&self, project_id: &str, name: Option<&str>) -> Result<TrackMeta> {
         let mut manifest = self.read_manifest(project_id)?;
-        let mut meta = new_track_meta(manifest.tracks.len());
+        let mut meta = TrackMeta::for_index(manifest.tracks.len());
         // Keep ids unique even after tracks have been deleted from the middle.
         while manifest.tracks.iter().any(|t| t.id == meta.id) {
             meta.id = format!("{}-{}", meta.id, manifest.tracks.len() + 1);
@@ -333,19 +333,6 @@ impl ProjectStore {
         }
         // Vanishingly unlikely; fall back to a timestamp rather than looping forever.
         format!("{base}-{}", now_ms())
-    }
-}
-
-fn new_track_meta(index: usize) -> TrackMeta {
-    TrackMeta {
-        id: format!("track-{}", index + 1),
-        name: format!("Track {}", index + 1),
-        channel: (index % 16) as u8,
-        instrument: InstrumentRef::BuiltInSampler,
-        muted: false,
-        soloed: false,
-        color: color_for_index(index).to_string(),
-        key_hint: None,
     }
 }
 
@@ -624,7 +611,7 @@ mod tests {
 
         // A track present in memory but absent from the manifest would be written and
         // then silently lost on the next load.
-        project.tracks.push(Track::new(new_track_meta(5), project.manifest.ppq));
+        project.tracks.push(Track::new(TrackMeta::for_index(5), project.manifest.ppq));
         assert!(store.save(&mut project).is_err());
     }
 

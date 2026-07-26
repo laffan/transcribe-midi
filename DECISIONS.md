@@ -1072,3 +1072,175 @@ holds, and if Windows had ever been in scope, `cpal` would have been the better 
 Notation moves last deliberately. It is a *view* on notes rather than a way of making or
 changing them, and building it before the re-centring would deepen exactly the emphasis
 this section exists to correct.
+
+---
+
+## Phase 8 built — the re-centring
+
+### One pending thing, one review surface
+
+An AI edit and a transcription turned out to be the same interaction with different
+innards: something produces notes you did not type, you look at them on the roll, you
+accept or reject. Phase 6 and Phase 7 each built their own panel for that, and the two
+rhymed without sharing anything.
+
+They now share a `Pending` type, one `ReviewBar`, one preview overlay on the roll, and one
+rule — the roll is read-only while a decision is outstanding, and only one decision can be
+outstanding at a time. That last part is not a limitation to work around; it is the
+guarantee that makes "undo it in one step" mean something.
+
+The review bar occupies the prompt bar's slot rather than appearing elsewhere. The thing
+you were asked to look at and the thing you answer with should not be in two places.
+
+### The prompt bar, and Return
+
+Moved out of the inspector to span the editor above the transport, focusable with `⌘K`
+from anywhere — the one shortcut that has to work while another text field has focus,
+since taking focus is its whole job.
+
+Return submits; `⇧`Return is a newline. That is the opposite of the Phase 6 panel, and
+deliberately: once this is the primary input, one line is the common case and reaching for
+a modifier on every use is friction on the main path.
+
+### Listen is a transport button
+
+Not a panel. MIDI recording — the least distinctive thing this app does — had a transport
+button while audio-to-MIDI was three sections down a sidebar. `L` sits next to `R` for the
+same reason. What stays in the inspector is the two settings that change the *result*, and
+the file route in.
+
+Labelled rather than given an icon: there is no established glyph for "turn audio into
+notes", and an unlabelled circle beside the record dot would read as a second record
+button.
+
+### An empty project offers two doors
+
+Rather than an empty grid and a mouse, which is how a MIDI editor introduces itself. The
+doors float *over* the roll with `pointer-events: none` on the wrapper, so the grid behind
+stays live and drawing a note by hand is never more than a click away — and the panel says
+so. It disappears the moment the project has a note, by any route.
+
+On a phone the roll is a couple of hundred pixels tall and the explanatory copy does not
+fit. The two verbs still do, and the verbs are the message; the explanation is a nicety.
+
+### History is not track-scoped
+
+Making the chain visible exposed that the sidebar was mislabelled: the undo stack spans
+the project, so "Track Inspector" was the wrong heading for a panel that now leads with
+it. The panel is titled History and the track fields sit below under their own label.
+
+The keyboard cheat sheet became a collapsed `<details>`. It was taller than either feature
+and outranked both.
+
+### Two gaps closed
+
+**Audio files.** `AVAudioFile` decodes anything CoreAudio can open — wav, aiff, caf, m4a,
+mp3, Voice Memos — to mono at the file's own rate, and hands it to the same pipeline. The
+formats are deliberately not enumerated in Rust; the system decides what it can decode and
+reports what it cannot.
+
+**The AI can write a new part.** `AiTarget::NewTrack` runs the tools against an *empty*
+workspace with the visible track supplied as read-only context, so "add a bass line under
+this" has something to be written against. The tools stay single-track — that is what keeps
+the diff and the transaction simple — and the track is created at accept time rather than
+when the proposal is made, so a rejected suggestion leaves no empty track behind. It is
+named after the request, because in an app where parts are described rather than played,
+what a part *is* is usually what was asked for.
+
+Adding a track is structure, not notes, so it does not push a history entry: undoing past
+it removes the notes and leaves the track. That matches how the Add Track button already
+behaves, and the alternative is a second kind of history entry every command would have to
+reason about.
+
+---
+
+## Phase 9 built — the transcription editor
+
+### What was already there, and thrown away
+
+`transcribe()` built a per-frame track of pitch, confidence and level plus an onset list,
+returned the notes, and dropped the rest. Those frames are the editor:
+
+- the per-frame fractional MIDI is the line the notes sit on — drawn where the pitch was
+  *measured*, not where it was rounded;
+- confidence drives the line's opacity, so a passage the tracker was unsure about looks
+  unsure rather than looking like a fact;
+- onsets are drawn through both lanes and are what a dragged note edge snaps to;
+- a note drawn off its own pitch line is one the analysis hesitated over, which is exactly
+  the note worth checking.
+
+`Analysis` is returned with every transcription. Exposing it cost almost nothing.
+
+### Peaks, not averages
+
+`peaks()` returns min/max pairs per bucket over a requested time window. Extremes rather
+than mean or RMS: at any zoom where one pixel covers hundreds of samples, averaging turns
+a percussive attack into a low bump and the eye loses the one feature it is looking for.
+
+The window is a parameter so the view asks for what is on screen. Shipping the samples to
+the webview instead would be twenty-odd megabytes for a few hundred columns.
+
+### The take is kept — in memory
+
+Phase 7 dropped the audio and called that a principle. It is superseded, as recorded
+above: audio is evidence attached to a take, never material in the arrangement.
+
+**In memory, for the session.** On-disk persistence is deliberately not here: two minutes
+at 48 kHz is ~23 MB, and putting that in the project directory needs a schema bump, a size
+budget, and a lifecycle for takes whose notes were discarded. Record, fine-tune, commit is
+one sitting, so a session-scoped take buys nearly all of the value for none of that. The
+take is released the moment its notes are committed — holding it after that would be the
+retention turning into a leak.
+
+### Re-derivation
+
+`capture_retranscribe` differs from `capture_transcribe` only in where the audio comes
+from, and that is the entire point. Changing the grid, or switching between the estimated
+tempo and the project's, used to mean playing the phrase again.
+
+### Adjustments are validated, not trusted
+
+Dragged notes go back through `capture_set_notes`, which validates every one before it can
+reach the command layer. Pitch drags snap to semitones — the line shows where the source
+actually sat, and fractions belong on the line, not in the MIDI. Time drags snap to
+detected onsets within 50 ms, which is what makes correcting a boundary land on the attack
+rather than near it.
+
+### What was verified
+
+- **270 Rust tests**, clippy clean, both Apple targets compile-check.
+- New pure tests: the analysis comes back with the notes and its frames line up with the
+  notes they produced; peaks keep a transient that averaging would bury, respect the
+  requested window, and survive being asked for more buckets than there are samples; a
+  reference track appears in the prompt marked untouchable; new tracks are named from the
+  request and cut at a word.
+- Headless Chromium at 390 / 834 / 1440 px: prompt bar, Listen button, first-run doors and
+  transcription settings all present, no console errors, no horizontal overflow.
+
+### Not verified
+
+Everything that needs a Mac, plus one new thing: **the transcription editor has never been
+drawn against real audio.** The waveform, the pitch line and the drag interactions have
+only been exercised against an empty take in a browser, because the take comes from
+`AVAudioFile` or the microphone and neither exists here.
+
+### What a human should test manually
+
+- [ ] Open an empty project; confirm the two doors, and that clicking the grid behind them
+      still draws a note.
+- [ ] `⌘K` from anywhere focuses the prompt, including while the tempo field has focus.
+- [ ] Press `L`, hum a phrase, press `L` again; confirm the review bar appears and the
+      notes are drawn green on the roll.
+- [ ] Press Fine-tune. Confirm the waveform matches what you sang, the pitch line follows
+      it, and the onset marks land on your attacks.
+- [ ] Drag a note in pitch; confirm it moves in semitones and the line stays put.
+- [ ] Drag a note edge near an attack; confirm it snaps to it.
+- [ ] Change the snap grid inside the editor; confirm it re-reads the take rather than
+      asking you to sing again, and that it is quick.
+- [ ] Transcribe an audio file — a voice memo is the realistic case.
+- [ ] Try a file longer than two minutes and confirm the refusal is legible.
+- [ ] "Add a bass line under this" with Write a new part selected; confirm a new track
+      appears **only** on Apply, named after the request.
+- [ ] Confirm the roll is read-only while a proposal is on screen, and editable again
+      after Discard.
+- [ ] Confirm the history strip lists the chain and that undone steps stay visible, dimmed.

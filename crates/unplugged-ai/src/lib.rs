@@ -53,10 +53,18 @@ pub struct EditRequest<'a> {
     pub prompt: &'a str,
     pub model: &'a str,
     pub context: AiContext,
+    /// The notes the tools operate on. Empty when writing into a new track.
     pub notes: &'a [Note],
     /// The editor's current selection, as indices into `notes`.
     pub selection: &'a [usize],
     pub track_name: &'a str,
+    /// A track shown to the model for context but which it cannot touch.
+    ///
+    /// This is what makes "add a bass line under this" expressible. The tools are
+    /// single-track by design — that is what keeps the diff and the transaction simple —
+    /// so writing a *new* part means an empty workspace plus the existing part as
+    /// something to write against. Without it the model would be composing blind.
+    pub reference: Option<(&'a str, &'a [Note])>,
 }
 
 /// One tool call and what came back, for the console.
@@ -120,7 +128,7 @@ fn system_prompt(request: &EditRequest<'_>) -> String {
          The user sees a diff of everything you changed and accepts or rejects it as one \
          step, so a wrong guess costs them a click. Finish with one or two sentences \
          describing what you did, in a musician's terms rather than a programmer's.\n\n\
-         The track, in full:\n{table}",
+         {reference}The track you are editing, in full:\n{table}",
         track = request.track_name,
         tempo = context.tempo_bpm,
         num = context.time_signature.numerator,
@@ -133,6 +141,16 @@ fn system_prompt(request: &EditRequest<'_>) -> String {
             request.selection.len().to_string()
         },
         table = ai::notes_table(request.notes, context, NOTES_IN_CONTEXT),
+        reference = match request.reference {
+            Some((name, notes)) if !notes.is_empty() => format!(
+                "You are writing into a NEW, empty track. The existing track \"{name}\" is \
+                 shown below for reference — write something that works against it. You \
+                 cannot change it; your tools only affect the new track.\n\n\
+                 \"{name}\", for reference only:\n{}\n\n",
+                ai::notes_table(notes, context, NOTES_IN_CONTEXT),
+            ),
+            _ => String::new(),
+        },
     )
 }
 
@@ -318,6 +336,7 @@ mod tests {
             notes,
             selection,
             track_name: "Piano",
+            reference: None,
         }
     }
 
@@ -345,6 +364,30 @@ mod tests {
         assert!(prompt.contains("C4") && prompt.contains("E4"), "the notes table");
         // The key itself must never be anywhere near this string.
         assert!(!prompt.contains("sk-ant"));
+    }
+
+    #[test]
+    fn a_reference_track_is_shown_but_marked_untouchable() {
+        let melody = vec![
+            Note::new(72, 0, 480, 96, 0).unwrap(),
+            Note::new(74, 480, 480, 96, 0).unwrap(),
+        ];
+        let mut request = request("add a bass line under this", &[], &[]);
+        request.reference = Some(("Melody", &melody));
+
+        let prompt = system_prompt(&request);
+        assert!(prompt.contains("NEW, empty track"));
+        assert!(prompt.contains("Melody"));
+        assert!(prompt.contains("C5"), "the reference notes are listed");
+        assert!(prompt.contains("cannot change it"), "and marked read-only");
+    }
+
+    #[test]
+    fn no_reference_means_no_mention_of_one() {
+        let notes = vec![Note::new(60, 0, 480, 96, 0).unwrap()];
+        let prompt = system_prompt(&request("quantize", &notes, &[]));
+        assert!(!prompt.contains("NEW, empty track"));
+        assert!(!prompt.contains("reference"));
     }
 
     #[test]

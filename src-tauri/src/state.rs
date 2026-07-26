@@ -5,7 +5,7 @@ use unplugged_audio::{AudioEngine, CaptureBackend};
 use unplugged_core::command::EditSession;
 use unplugged_core::recorder::Recorder;
 use unplugged_core::sequencer::Timeline;
-use unplugged_core::{Project, ProjectManifest, ProjectStore, Ticks, Track};
+use unplugged_core::{Project, ProjectManifest, ProjectStore, Ticks, Track, TrackMeta};
 use unplugged_midi::MidiInputHost;
 
 /// The project currently open in the editor.
@@ -38,6 +38,29 @@ impl OpenProject {
 
     pub fn tracks(&self) -> &[Track] {
         self.session.tracks()
+    }
+
+    /// Add a track to the open session and its manifest together.
+    ///
+    /// Both, or `save` refuses the project — the store checks that the manifest's track
+    /// list matches the tracks it is given, which is exactly the kind of drift worth
+    /// refusing. Returns the new track's index.
+    pub fn add_track(&mut self, name: String) -> usize {
+        let index = self.session.tracks().len();
+        let mut meta = TrackMeta::for_index(index);
+        // Ids must stay unique even after tracks have been deleted from the middle.
+        while self.session.tracks().iter().any(|t| t.meta.id == meta.id) {
+            meta.id = format!("{}-{}", meta.id, index + 1);
+        }
+        let name = name.trim();
+        if !name.is_empty() {
+            meta.name = name.to_string();
+        }
+
+        self.manifest.tracks.push(meta.clone());
+        self.session.push_track(Track::new(meta, self.manifest.ppq));
+        self.dirty = true;
+        index
     }
 }
 

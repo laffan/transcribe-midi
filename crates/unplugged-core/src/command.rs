@@ -111,6 +111,17 @@ impl EditSession {
         &self.tracks
     }
 
+    /// Append a track.
+    ///
+    /// Structure, not notes. The undo stack covers note mutations — that is the invariant
+    /// this type exists to enforce — and adding a track is not one, so this does not push
+    /// a history entry and undoing past it leaves the track in place, empty. That matches
+    /// how the Add Track button already behaves; the alternative is a second kind of
+    /// history entry that every command would have to reason about.
+    pub fn push_track(&mut self, track: Track) {
+        self.tracks.push(track);
+    }
+
     pub fn track(&self, index: usize) -> Result<&Track> {
         self.tracks
             .get(index)
@@ -135,6 +146,21 @@ impl EditSession {
 
     pub fn redo_label(&self) -> Option<&str> {
         self.redo_labels.last().map(String::as_str)
+    }
+
+    /// Everything on the undo stack, oldest first.
+    ///
+    /// Exposed so the editor can *show* the chain of transformations rather than only the
+    /// top of it. When the main way to change notes is describing what you want, the
+    /// sequence you described is the document as much as the notes are, and a label
+    /// visible only inside the Edit menu is not a sequence anyone can work with.
+    pub fn history(&self) -> &[String] {
+        &self.undo_labels
+    }
+
+    /// Undone entries, most recently undone last — the redo direction.
+    pub fn redo_history(&self) -> &[String] {
+        &self.redo_labels
     }
 
     // -----------------------------------------------------------------------

@@ -24,6 +24,9 @@ pub struct EditorState {
     pub can_redo: bool,
     pub undo_label: Option<String>,
     pub redo_label: Option<String>,
+    /// The whole undo stack, oldest first, for the history strip.
+    pub history: Vec<String>,
+    pub redo_history: Vec<String>,
     pub dirty: bool,
     /// Indices in the affected track that the UI should select.
     pub affected: Vec<usize>,
@@ -38,6 +41,8 @@ impl EditorState {
             can_redo: open.session.can_redo(),
             undo_label: open.session.undo_label().map(str::to_owned),
             redo_label: open.session.redo_label().map(str::to_owned),
+            history: open.session.history().to_vec(),
+            redo_history: open.session.redo_history().to_vec(),
             dirty: open.dirty,
             affected,
             affected_track,

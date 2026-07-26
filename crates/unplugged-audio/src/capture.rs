@@ -40,11 +40,18 @@ pub fn is_permission_error(error: &AudioError) -> bool {
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple {
     use super::*;
-    use std::ffi::{c_void, CStr};
+    use std::ffi::{c_void, CStr, CString};
     use std::os::raw::c_char;
 
-    // Implemented in swift/UnpluggedAudio/Sources/UnpluggedAudio/Capture.swift.
+    // Implemented in swift/UnpluggedAudio/Sources/UnpluggedAudio/{Capture,Decode}.swift.
     extern "C" {
+        fn unplugged_audio_decode_file(
+            path: *const c_char,
+            out_count: *mut u32,
+            out_rate: *mut f64,
+            out_status: *mut i32,
+        ) -> *mut f32;
+        fn unplugged_audio_free_samples(pointer: *mut f32);
         fn unplugged_capture_create() -> *mut c_void;
         fn unplugged_capture_destroy(handle: *mut c_void);
         fn unplugged_capture_start(handle: *mut c_void) -> i32;
@@ -101,6 +108,43 @@ mod apple {
                 unplugged_capture_destroy(self.handle);
             }
         }
+    }
+
+    pub fn decode_file(path: &str) -> AudioResult<(Vec<f32>, f64)> {
+        let c_path = CString::new(path)
+            .map_err(|_| AudioError("that path contains an interior NUL byte".into()))?;
+
+        let mut count: u32 = 0;
+        let mut rate: f64 = 0.0;
+        let mut status: i32 = 0;
+
+        // SAFETY: the three out-params are valid for the call; the returned pointer is
+        // either null or a malloc'd buffer of `count` f32s, copied and freed here.
+        let samples = unsafe {
+            let pointer = unplugged_audio_decode_file(
+                c_path.as_ptr(),
+                &mut count,
+                &mut rate,
+                &mut status,
+            );
+            if pointer.is_null() {
+                return Err(AudioError(match status {
+                    1 => "that file could not be read".into(),
+                    2 => "that audio format is not supported".into(),
+                    3 => format!(
+                        "that file is longer than {MAX_CAPTURE_SECONDS:.0} seconds — \
+                         trim it first"
+                    ),
+                    4 => "that file contains no audio".into(),
+                    _ => "that file could not be decoded".into(),
+                }));
+            }
+            let copied = std::slice::from_raw_parts(pointer, count as usize).to_vec();
+            unplugged_audio_free_samples(pointer);
+            copied
+        };
+
+        Ok((samples, rate))
     }
 
     impl CaptureBackend for AppleCapture {
@@ -164,6 +208,22 @@ mod apple {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use apple::AppleCapture;
+
+/// Decode an audio file to mono samples plus its sample rate.
+///
+/// The microphone is not the main way audio arrives here — a voice memo, a bounce, or a
+/// stem is more likely, and once this is a plugin the host's audio is likelier still.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub fn decode_file(path: &str) -> AudioResult<(Vec<f32>, f64)> {
+    apple::decode_file(path)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub fn decode_file(_path: &str) -> AudioResult<(Vec<f32>, f64)> {
+    Err(AudioError(
+        "decoding audio needs the macOS or iOS build".into(),
+    ))
+}
 
 /// Stands in off-Apple so the workspace builds and the Rust logic stays testable.
 ///

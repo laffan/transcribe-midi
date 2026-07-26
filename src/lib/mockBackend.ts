@@ -15,6 +15,7 @@ import type {
   AiModelsResponse,
   CaptureStatus,
   TranscriptionPreview,
+  WaveformPeaks,
   AiProposal,
   AiStatus,
   CommandError,
@@ -432,6 +433,16 @@ export const mockBackend = {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
   capture_cancel(): void {},
+  capture_retranscribe(): TranscriptionPreview {
+    return fail("internal", "transcription needs the macOS or iOS build");
+  },
+  capture_load_file(): TranscriptionPreview {
+    return fail("internal", "transcription needs the macOS or iOS build");
+  },
+  capture_waveform: (): WaveformPeaks => [],
+  capture_set_notes(): number {
+    return fail("internal", "transcription needs the macOS or iOS build");
+  },
 };
 
 const inputSettings: InputSettings = {

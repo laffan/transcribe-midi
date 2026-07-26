@@ -113,6 +113,8 @@ pub struct Transcription {
     /// Fraction of the recording that held a detectable pitch. A low value usually means
     /// the microphone heard the room rather than the instrument.
     pub pitched_fraction: f32,
+    /// The per-frame evidence behind the notes.
+    pub analysis: Analysis,
 }
 
 impl Transcription {
@@ -126,17 +128,39 @@ impl Transcription {
 // ---------------------------------------------------------------------------
 
 /// One frame's worth of measurements.
-#[derive(Debug, Clone, Copy)]
-struct Frame {
-    frequency: f32,
-    confidence: f32,
-    level: f32,
+///
+/// Public, and returned with the transcription, because these frames *are* the editor.
+/// The pitch track is the line the notes sit on, confidence says which notes are worth a
+/// second look, and level draws the envelope. Phase 7 computed all of this and threw it
+/// away, which is why changing the grid meant recording again.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Frame {
+    /// Detected fundamental in Hz. Zero when the frame is unpitched.
+    pub frequency: f32,
+    /// Fractional MIDI note number, so the pitch line is drawn where it was measured
+    /// rather than where it was rounded to. Zero when unpitched.
+    pub midi: f32,
+    pub confidence: f32,
+    pub level: f32,
 }
 
 impl Frame {
     fn voiced(&self, floor: f32) -> bool {
         self.frequency > 0.0 && self.confidence >= MIN_CONFIDENCE && self.level > floor
     }
+}
+
+/// Everything the transcription editor needs to draw over the waveform.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Analysis {
+    pub frames: Vec<Frame>,
+    /// Frame indices where an attack was detected. Note boundaries snap to these.
+    pub onsets: Vec<usize>,
+    /// Seconds between frames.
+    pub hop_seconds: f64,
+    /// The level below which a frame counts as silence, in the same units as
+    /// `Frame::level`. Drawn as the noise floor.
+    pub silence_floor: f32,
 }
 
 /// Transcribe mono samples into notes.
@@ -165,6 +189,7 @@ pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription 
             let estimate = pitch::yin(window, options.sample_rate, MIN_HZ, MAX_HZ);
             Frame {
                 frequency: estimate.frequency,
+                midi: pitch::hz_to_midi(estimate.frequency),
                 confidence: estimate.confidence,
                 level: dsp::rms(window),
             }
@@ -204,7 +229,56 @@ pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription 
         tempo_confidence,
         duration_seconds,
         pitched_fraction: pitched as f32 / frames.len().max(1) as f32,
+        analysis: Analysis {
+            frames,
+            onsets: track.onsets,
+            hop_seconds: hop as f64 / options.sample_rate,
+            silence_floor: floor,
+        },
     }
+}
+
+/// Min/max pairs over `buckets` equal spans of `samples`.
+///
+/// What a waveform view actually draws. A bucket's *extremes* rather than its mean or its
+/// RMS: at any zoom where one pixel covers hundreds of samples, averaging turns a
+/// percussive attack into a low bump and the eye loses exactly the feature it is looking
+/// for. Min and max keep the transient.
+///
+/// The range is given in seconds so the caller can ask for what is on screen rather than
+/// receiving the whole take at every zoom level.
+pub fn peaks(
+    samples: &[f32],
+    sample_rate: f64,
+    from_seconds: f64,
+    to_seconds: f64,
+    buckets: usize,
+) -> Vec<(f32, f32)> {
+    if samples.is_empty() || buckets == 0 || sample_rate <= 0.0 || to_seconds <= from_seconds {
+        return Vec::new();
+    }
+
+    let start = ((from_seconds.max(0.0) * sample_rate) as usize).min(samples.len());
+    let end = ((to_seconds.max(0.0) * sample_rate).ceil() as usize).min(samples.len());
+    if end <= start {
+        return Vec::new();
+    }
+
+    let span = end - start;
+    (0..buckets)
+        .map(|bucket| {
+            let low = start + span * bucket / buckets;
+            // At least one sample per bucket: asking for more buckets than there are
+            // samples is a legitimate thing for a zoomed-in view to do, and it should
+            // repeat samples rather than return empty columns.
+            let high = (start + span * (bucket + 1) / buckets).max(low + 1).min(end);
+
+            let slice = &samples[low..high];
+            slice.iter().fold((f32::MAX, f32::MIN), |(min, max), &s| {
+                (min.min(s), max.max(s))
+            })
+        })
+        .collect()
 }
 
 /// Split the frame track into candidate notes.
@@ -571,6 +645,102 @@ mod tests {
                 "notes must come back sorted"
             );
         }
+    }
+
+    #[test]
+    fn the_analysis_comes_back_with_the_notes() {
+        let result = transcribe(&melody(&[60, 62, 64], 0.5), options());
+        let analysis = &result.analysis;
+
+        assert!(!analysis.frames.is_empty());
+        assert!((analysis.hop_seconds - HOP_SECONDS).abs() < 1e-9);
+        assert!(analysis.silence_floor > 0.0);
+
+        // Two boundaries for three notes — the first note's attack is at sample zero and
+        // flux has nothing to change from, which segmentation handles by voicing.
+        assert_eq!(analysis.onsets.len(), 2, "{:?}", analysis.onsets);
+
+        // The pitch line has to be drawable: a voiced frame carries a fractional MIDI
+        // value near the note it belongs to.
+        let voiced: Vec<&Frame> = analysis
+            .frames
+            .iter()
+            .filter(|f| f.voiced(analysis.silence_floor))
+            .collect();
+        assert!(voiced.len() > analysis.frames.len() / 4);
+        for frame in voiced {
+            assert!(
+                (59.0..=65.0).contains(&frame.midi),
+                "stray pitch frame at {}",
+                frame.midi
+            );
+        }
+    }
+
+    #[test]
+    fn frames_line_up_with_the_notes_they_produced() {
+        let result = transcribe(&melody(&[60, 67], 0.6), options());
+        let analysis = &result.analysis;
+
+        for detected in &result.notes {
+            // The middle of each note should be a voiced frame at that note's pitch.
+            let middle = detected.start_seconds + detected.duration_seconds / 2.0;
+            let index = (middle / analysis.hop_seconds) as usize;
+            let frame = analysis.frames.get(index).expect("frame inside the note");
+
+            assert!(
+                (frame.midi - detected.note.pitch as f32).abs() < 1.0,
+                "frame {index} reads {:.2}, note is {}",
+                frame.midi,
+                detected.note.pitch
+            );
+        }
+    }
+
+    #[test]
+    fn peaks_keep_the_transient() {
+        // A single spike in an otherwise quiet buffer. Averaging would bury it; min/max
+        // must not, because that spike is the attack a user is looking for.
+        let mut samples = vec![0.01f32; 10_000];
+        samples[5_000] = 1.0;
+        samples[5_001] = -1.0;
+
+        let buckets = peaks(&samples, 10_000.0, 0.0, 1.0, 100);
+        assert_eq!(buckets.len(), 100);
+
+        let (min, max) = buckets[50];
+        assert!((max - 1.0).abs() < 1e-6, "the peak survives: {max}");
+        assert!((min + 1.0).abs() < 1e-6, "and so does the trough: {min}");
+
+        // Its neighbours stay quiet.
+        assert!(buckets[49].1 < 0.02 && buckets[51].1 < 0.02);
+    }
+
+    #[test]
+    fn peaks_respect_the_requested_window() {
+        let samples: Vec<f32> = (0..1000).map(|i| if i < 500 { 0.5 } else { -0.5 }).collect();
+
+        let first = peaks(&samples, 1000.0, 0.0, 0.5, 10);
+        assert!(first.iter().all(|&(min, max)| min == 0.5 && max == 0.5));
+
+        let second = peaks(&samples, 1000.0, 0.5, 1.0, 10);
+        assert!(second.iter().all(|&(min, max)| min == -0.5 && max == -0.5));
+    }
+
+    #[test]
+    fn peaks_survive_degenerate_requests() {
+        let samples = vec![0.5f32; 100];
+        assert!(peaks(&[], 1000.0, 0.0, 1.0, 10).is_empty());
+        assert!(peaks(&samples, 1000.0, 0.0, 1.0, 0).is_empty());
+        assert!(peaks(&samples, 0.0, 0.0, 1.0, 10).is_empty());
+        assert!(peaks(&samples, 1000.0, 1.0, 0.0, 10).is_empty(), "reversed range");
+        assert!(peaks(&samples, 1000.0, 5.0, 6.0, 10).is_empty(), "past the end");
+
+        // More buckets than samples: a zoomed-in view is entitled to ask, and every
+        // bucket must still carry a value rather than the fold's sentinel.
+        let dense = peaks(&samples, 1000.0, 0.0, 0.1, 500);
+        assert_eq!(dense.len(), 500);
+        assert!(dense.iter().all(|&(min, max)| min == 0.5 && max == 0.5));
     }
 
     #[test]

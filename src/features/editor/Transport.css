@@ -99,3 +99,38 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+/*
+ * Listening sits beside Record because it is the peer of Record in this app, not a lesser
+ * thing behind a panel — turning audio into notes is one of the two features the whole
+ * app is for. Labelled rather than an icon: there is no established glyph for it, and a
+ * mystery circle next to the record dot would read as a second record button.
+ */
+.btn--listen {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.btn--listening {
+  background: var(--diff-added);
+  border-color: var(--diff-added);
+  color: var(--text-inverse);
+}
+
+.transport__level {
+  display: block;
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.transport__level-fill {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transition: width 80ms linear;
+}

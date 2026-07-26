@@ -25,9 +25,22 @@ use crate::editor::EditorState;
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 
+/// Where an AI edit is aimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiTarget {
+    /// Change the track the user is looking at.
+    ThisTrack,
+    /// Write a new part alongside it, with the current track as read-only context.
+    NewTrack,
+}
+
 /// A proposal waiting for the user to accept or reject it.
 pub struct PendingProposal {
     pub track: usize,
+    /// Set when the proposal targets a track that does not exist yet; it is created at
+    /// accept time, not before, so a rejected suggestion leaves no empty track behind.
+    pub new_track_name: Option<String>,
     pub transaction: Transaction,
     /// The track's notes when the proposal was made.
     ///
@@ -197,6 +210,7 @@ pub async fn ai_propose(
     track: usize,
     prompt: String,
     selection: Vec<usize>,
+    target: AiTarget,
 ) -> CommandResult<AiProposal> {
     let model = state
         .ai_prefs
@@ -210,7 +224,7 @@ pub async fn ai_propose(
 
     // Snapshot everything the loop needs, then drop the lock: the request takes seconds
     // and holding the editor lock across it would freeze every other command.
-    let (context, notes, track_name) = {
+    let (context, notes, track_name, reference, target_index) = {
         let guard = state
             .open
             .lock()
@@ -218,30 +232,44 @@ pub async fn ai_propose(
         let open = guard
             .as_ref()
             .ok_or_else(|| CommandError::from("no project is open".to_string()))?;
-        let target = open
+        let source = open
             .tracks()
             .get(track)
             .ok_or_else(|| CommandError::from(format!("no track at index {track}")))?;
+
+        // A new part is written into an empty workspace with the visible track supplied
+        // as context, and lands at the index the track will occupy once it is created.
+        let (notes, reference, index) = match target {
+            AiTarget::ThisTrack => (source.notes.clone(), None, track),
+            AiTarget::NewTrack => (
+                Vec::new(),
+                Some((source.meta.name.clone(), source.notes.clone())),
+                open.tracks().len(),
+            ),
+        };
 
         (
             AiContext {
                 ppq: open.manifest.ppq,
                 time_signature: open.manifest.time_signature,
                 tempo_bpm: open.manifest.tempo_bpm,
-                channel: target.meta.channel,
+                channel: source.meta.channel,
                 // The track's key hint is what makes "harmonise a third above" work
                 // without the user restating the key in every prompt.
-                key: target.meta.key_hint.as_deref().and_then(Key::parse),
+                key: source.meta.key_hint.as_deref().and_then(Key::parse),
             },
-            target.notes.clone(),
-            target.meta.name.clone(),
+            notes,
+            source.meta.name.clone(),
+            reference,
+            index,
         )
     };
 
     let base: Vec<Note> = notes.clone();
+    let prompt_for_name = prompt.clone();
     let proposal = tauri::async_runtime::spawn_blocking(move || {
         unplugged_ai::propose_edit(
-            track,
+            target_index,
             &EditRequest {
                 prompt: &prompt,
                 model: &model,
@@ -249,6 +277,9 @@ pub async fn ai_propose(
                 notes: &notes,
                 selection: &selection,
                 track_name: &track_name,
+                reference: reference
+                    .as_ref()
+                    .map(|(name, notes)| (name.as_str(), notes.as_slice())),
             },
         )
     })
@@ -267,7 +298,11 @@ pub async fn ai_propose(
             None
         } else {
             Some(PendingProposal {
-                track,
+                track: target_index,
+                new_track_name: match target {
+                    AiTarget::NewTrack => Some(new_track_name(&prompt_for_name)),
+                    AiTarget::ThisTrack => None,
+                },
                 transaction: proposal.transaction,
                 base,
             })
@@ -284,6 +319,29 @@ pub async fn ai_propose(
         summary,
         empty,
     })
+}
+
+/// Name a track after the request that produced it.
+///
+/// The user's own words, trimmed to something that fits a track list. Better than
+/// "Track 3": in an app where parts are described rather than played, what a part *is*
+/// is usually exactly what was asked for.
+fn new_track_name(prompt: &str) -> String {
+    const MAX: usize = 24;
+    let first_line = prompt.trim().lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
+        return "New part".to_string();
+    }
+    if first_line.chars().count() <= MAX {
+        return first_line.to_string();
+    }
+    // Cut at a word boundary where there is one nearby, so the label reads as words
+    // rather than a truncation.
+    let short: String = first_line.chars().take(MAX).collect();
+    match short.rfind(' ') {
+        Some(space) if space >= MAX / 2 => format!("{}…", &short[..space]),
+        _ => format!("{}…", short.trim_end()),
+    }
 }
 
 /// Apply the pending proposal as one undoable transaction.
@@ -306,6 +364,22 @@ pub fn ai_accept(state: State<'_, AppState>) -> CommandResult<EditorState> {
     let open = guard
         .as_mut()
         .ok_or_else(|| CommandError::from("no project is open".to_string()))?;
+
+    if let Some(name) = &proposal.new_track_name {
+        // Created now rather than when the proposal was made, so a rejected suggestion
+        // leaves no empty track behind. The index it was written against is the one it
+        // gets, which the check below confirms.
+        if open.tracks().len() != proposal.track {
+            return Err(CommandError {
+                code: "stale_proposal",
+                message: "the track list changed while the suggestion was being prepared \
+                          — ask again"
+                    .to_string(),
+            });
+        }
+        open.add_track(name.clone());
+        let _ = state.audio.ensure_tracks(open.tracks().len());
+    }
 
     let current = open
         .tracks()
@@ -341,6 +415,18 @@ pub fn ai_reject(state: State<'_, AppState>) -> CommandResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_track_is_named_after_the_request() {
+        assert_eq!(new_track_name("add a bass line"), "add a bass line");
+        assert_eq!(new_track_name("  "), "New part");
+        assert_eq!(new_track_name("pad chords\nsecond line"), "pad chords");
+
+        let long = new_track_name("a walking bass line under the melody in the same key");
+        assert!(long.chars().count() <= 25, "{long}");
+        assert!(long.ends_with('…'));
+        assert!(!long.contains("  "), "cut at a word, not mid-word: {long}");
+    }
 
     #[test]
     fn preferences_survive_a_round_trip_and_tolerate_a_missing_file() {

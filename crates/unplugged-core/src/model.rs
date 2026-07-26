@@ -175,6 +175,24 @@ pub struct TrackMeta {
 }
 
 impl TrackMeta {
+    /// A fresh track for position `index`, with the defaults a new track gets.
+    ///
+    /// Lives here rather than in the store because tracks are now created in two places:
+    /// on disk by `ProjectStore::add_track`, and in memory when an AI suggestion writes a
+    /// new part. Two constructors would drift.
+    pub fn for_index(index: usize) -> Self {
+        TrackMeta {
+            id: format!("track-{}", index + 1),
+            name: format!("Track {}", index + 1),
+            channel: (index % 16) as u8,
+            instrument: InstrumentRef::BuiltInSampler,
+            muted: false,
+            soloed: false,
+            color: color_for_index(index).to_string(),
+            key_hint: None,
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.channel > 15 {
             return Err(CoreError::ChannelOutOfRange(self.channel as u16));

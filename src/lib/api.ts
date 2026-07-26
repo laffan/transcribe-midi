@@ -16,6 +16,9 @@ import type {
   TranscriptionPreview,
   AiProposal,
   AiStatus,
+  AiTarget,
+  Note,
+  WaveformPeaks,
   CommandError,
   EditorState,
   EditRequest,
@@ -159,8 +162,8 @@ export const api = {
   aiClearKey: () => call<AiStatus>("ai_clear_key"),
   aiModels: () => call<AiModelsResponse>("ai_models"),
   aiSetModel: (model: string) => call<AiStatus>("ai_set_model", { model }),
-  aiPropose: (track: number, prompt: string, selection: number[]) =>
-    call<AiProposal>("ai_propose", { track, prompt, selection }),
+  aiPropose: (track: number, prompt: string, selection: number[], target: AiTarget) =>
+    call<AiProposal>("ai_propose", { track, prompt, selection, target }),
   aiAccept: () => call<EditorState>("ai_accept"),
   aiReject: () => call<void>("ai_reject"),
 
@@ -174,6 +177,23 @@ export const api = {
       useProjectTempo,
       quantizeTicks,
     }),
+  captureRetranscribe: (useProjectTempo: boolean, quantizeTicks: number) =>
+    call<TranscriptionPreview>("capture_retranscribe", { useProjectTempo, quantizeTicks }),
+  captureLoadFile: (
+    path: string,
+    track: number,
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+  ) =>
+    call<TranscriptionPreview>("capture_load_file", {
+      path,
+      track,
+      useProjectTempo,
+      quantizeTicks,
+    }),
+  captureWaveform: (fromSeconds: number, toSeconds: number, buckets: number) =>
+    call<WaveformPeaks>("capture_waveform", { fromSeconds, toSeconds, buckets }),
+  captureSetNotes: (notes: Note[]) => call<number>("capture_set_notes", { notes }),
   captureAccept: () => call<EditorState>("capture_accept"),
   captureCancel: () => call<void>("capture_cancel"),
 

@@ -1,0 +1,96 @@
+/*
+ * Sits where the prompt bar sits, replacing it while a decision is outstanding. Same
+ * position on purpose: the thing you were asked to look at and the thing you answer with
+ * should not be in two different places.
+ */
+.review {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 2px solid var(--accent);
+  background: var(--bg-2);
+  min-width: 0;
+}
+
+.review__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.review__narration {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text-0);
+  overflow-wrap: anywhere;
+}
+
+.review__warning {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}
+
+.review__counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The same three meanings as the roll overlay: new, going, moving. */
+.review__count {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.review__count--added { color: var(--diff-added); }
+.review__count--removed { color: var(--diff-removed); }
+.review__count--changed { color: var(--diff-changed); }
+
+.review__hint,
+.review__usage {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.review__steps {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.review__step--failed { color: var(--danger); }
+
+.review__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .review {
+    flex-wrap: wrap;
+  }
+  .review__actions {
+    flex-basis: 100%;
+  }
+}

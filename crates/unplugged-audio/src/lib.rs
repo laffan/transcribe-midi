@@ -16,7 +16,7 @@ use unplugged_core::sequencer::{RenderedEvent, Timeline};
 use unplugged_core::Ticks;
 
 pub use backend::{AudioBackend, AudioError, AudioResult, NullBackend};
-pub use capture::{new_capture, CaptureBackend, NullCapture};
+pub use capture::{decode_file, new_capture, CaptureBackend, NullCapture};
 pub use shared::{AudioCursor, SharedTransport};
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]

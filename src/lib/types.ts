@@ -91,6 +91,9 @@ export interface EditorState {
   can_redo: boolean;
   undo_label: string | null;
   redo_label: string | null;
+  /** The whole undo stack, oldest first. */
+  history: string[];
+  redo_history: string[];
   dirty: boolean;
   /** Indices in `affected_track` the UI should select after this edit. */
   affected: number[];
@@ -238,6 +241,9 @@ export interface Usage {
  * A proposed edit. Deliberately does not contain the transaction — that stays in Rust,
  * so the webview can look at a change but cannot construct one.
  */
+/** Where an AI edit is aimed. Mirrors `AiTarget` in src-tauri/src/ai.rs. */
+export type AiTarget = "this_track" | "new_track";
+
 export interface AiProposal {
   diff: NoteDiff;
   preview_notes: Note[];
@@ -270,6 +276,23 @@ export interface DetectedNote {
   cents_off: number;
 }
 
+/** One analysis frame — the evidence the transcription editor draws. */
+export interface Frame {
+  frequency: number;
+  /** Fractional MIDI note, so the pitch line sits where it was measured. */
+  midi: number;
+  confidence: number;
+  level: number;
+}
+
+export interface Analysis {
+  frames: Frame[];
+  /** Frame indices where an attack was detected. Note edges snap to these. */
+  onsets: number[];
+  hop_seconds: number;
+  silence_floor: number;
+}
+
 export interface TranscriptionPreview {
   notes: DetectedNote[];
   tempo_bpm: number;
@@ -278,7 +301,13 @@ export interface TranscriptionPreview {
   duration_seconds: number;
   pitched_fraction: number;
   warning: string | null;
+  analysis: Analysis;
+  use_project_tempo: boolean;
+  quantize_ticks: number;
 }
+
+/** Min/max pairs for drawing a waveform. */
+export type WaveformPeaks = [number, number][];
 
 export const MIN_TEMPO = 20;
 export const MAX_TEMPO = 300;

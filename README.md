@@ -15,13 +15,11 @@ did not type, so you need somewhere to *see* what arrived and fix the last five 
 that is what the editor is for. Every AI edit and every transcription is previewed as a
 diff before it is applied, and lands as a single undo step, for the same reason.
 
-> **Status: Phase 7 of 9.** Project CRUD, the audio engine and transport, the piano roll
+> **Status: Phase 9 of 11.** Project CRUD, the audio engine and transport, the piano roll
 > and undoable command layer, external MIDI input with loop recording, SMF
-> import/export/sharing, AI-assisted editing and monophonic audio-to-MIDI are built.
->
-> The two headline features currently sit at the bottom of a scrolling sidebar, which is
-> the wrong emphasis for an app that is *about* them. Phase 8 is a re-centring rather than
-> a new feature — see [DECISIONS.md](./DECISIONS.md).
+> import/export/sharing, AI-assisted editing, monophonic audio-to-MIDI and the
+> transcription editor are built. The AUv3 plugin (Phase 10) and the notation view
+> (Phase 11) are not.
 >
 > The audio engine has been verified making sound on real hardware. Nothing else written
 > in Swift has been compiled — MIDI input, the share sheet, drag-out, the Keychain and
@@ -38,11 +36,16 @@ returns confident nonsense rather than a chord.
 The pipeline is YIN pitch detection, spectral-flux onsets and autocorrelation tempo
 estimation, all hand-written and tested against synthetic signals.
 
-Phase 9 turns this into an editor rather than a one-shot: the take is kept, drawn as a
-waveform with the measured pitch traced over it, and the detected notes sit on top as boxes
-you can drag in pitch and length — so a wrong note is corrected against the evidence rather
-than by ear against a grid. That also makes the settings re-derivable: changing the grid or
-the tempo re-reads the same take instead of asking you to play it again.
+Press **Listen** in the transport, or open an audio file — a voice memo, a bounce, a stem.
+
+Then **Fine-tune**: the take is drawn as a waveform with the measured pitch traced over it,
+and the detected notes sit on top as boxes you drag in pitch and length. A wrong note is
+corrected against the evidence rather than by ear against a grid, and note edges snap to
+the detected attacks. Changing the grid or the tempo re-reads the same take instead of
+asking you to play it again.
+
+The audio is kept for the session so that editor has something to draw, and released once
+the notes are committed. It is evidence attached to a take, not a track in the arrangement.
 
 ## Changing MIDI by describing it
 
@@ -130,7 +133,7 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 262 tests
+cargo test --workspace          # 270 tests
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
@@ -152,6 +155,8 @@ cargo check --workspace --exclude unplugged --target aarch64-apple-ios
 | `↑ ↓ ← →` | Nudge (`⇧` for an octave / a bar) |
 | `⌥`-click | Delete a note |
 | `R` | Record MIDI |
+| `L` | Listen — turn audio into notes |
+| `⌘K` | Focus the prompt |
 | `A`–`L`, `W/E/T/Y/U` | Play the on-screen keyboard |
 | `Z` / `X` | Octave down / up |
 
@@ -172,9 +177,9 @@ A project is a directory under the app data dir:
 files deliberately do not duplicate them. Writes are atomic (temp file + rename), so an
 interrupted save leaves the previous project intact.
 
-Phase 9 adds a `takes/` directory: the audio behind a transcription, kept so the waveform
-editor has something to draw and so the transcription settings stay re-derivable. It is
-evidence attached to a take, not a track in the arrangement.
+Takes are held in memory for the session rather than written here. Two minutes at 48 kHz is
+~23 MB, and putting that in the project directory needs a schema bump, a size budget and a
+lifecycle — see [DECISIONS.md](./DECISIONS.md).
 
 ## Out of scope
 

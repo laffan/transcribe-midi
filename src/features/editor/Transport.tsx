@@ -19,6 +19,10 @@ interface TransportProps {
   onPlay: () => void;
   onStop: () => void;
   onRecord: () => void;
+  /** Audio-to-MIDI capture. A peer of MIDI record, not a panel. */
+  listening: boolean;
+  listenLevel: number;
+  onListen: () => void;
   onToggleLoop: () => void;
   onToggleMetronome: () => void;
   onReturnToZero: () => void;
@@ -59,6 +63,9 @@ export function Transport({
   onPlay,
   onStop,
   onRecord,
+  listening,
+  listenLevel,
+  onListen,
   onToggleLoop,
   onToggleMetronome,
   onReturnToZero,
@@ -92,9 +99,26 @@ export function Transport({
           onClick={onRecord}
           aria-label={recording ? "Stop recording" : "Record"}
           aria-pressed={recording}
-          title={recording ? "Stop recording (R)" : "Record (R)"}
+          title={recording ? "Stop recording (R)" : "Record MIDI (R)"}
         >
           ●
+        </button>
+        <button
+          className={`btn btn--listen ${listening ? "btn--listening" : ""}`}
+          onClick={onListen}
+          aria-label={listening ? "Stop listening and transcribe" : "Listen and transcribe"}
+          aria-pressed={listening}
+          title={listening ? "Stop and transcribe (L)" : "Listen — turn audio into notes (L)"}
+        >
+          {listening ? "Transcribe" : "Listen"}
+          {listening && (
+            <span className="transport__level" aria-hidden="true">
+              <span
+                className="transport__level-fill"
+                style={{ width: `${Math.min(100, listenLevel * 130)}%` }}
+              />
+            </span>
+          )}
         </button>
       </div>
 

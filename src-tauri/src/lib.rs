@@ -168,6 +168,10 @@ pub fn run() {
             transcribe::capture_start,
             transcribe::capture_poll,
             transcribe::capture_transcribe,
+            transcribe::capture_retranscribe,
+            transcribe::capture_load_file,
+            transcribe::capture_waveform,
+            transcribe::capture_set_notes,
             transcribe::capture_accept,
             transcribe::capture_cancel,
         ])

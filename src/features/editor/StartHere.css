@@ -1,0 +1,110 @@
+/*
+ * Floats over the (empty) roll rather than replacing it, so the grid is visible behind
+ * and drawing a note by hand is never more than a click away. `pointer-events` is off on
+ * the wrapper for exactly that reason: the roll underneath stays live.
+ */
+.starthere {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  pointer-events: none;
+  min-width: 0;
+  /* Never bleed past the roll. The panel below it is a different thing, and doors
+     floating over the inspector read as a bug rather than an invitation. */
+  overflow: hidden;
+}
+
+.starthere__doors {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  max-width: 640px;
+  min-width: 0;
+}
+
+.starthere__door {
+  pointer-events: auto;
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: left;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-raised);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.starthere__door:hover {
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
+
+.starthere__verb {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.starthere__detail {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.starthere__aside {
+  margin: 0;
+  max-width: 480px;
+  text-align: center;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/*
+ * On a phone the roll is a couple of hundred pixels tall and the descriptive copy simply
+ * does not fit. The two verbs still do, and the verbs are the part that matters — the
+ * explanation is a nicety, the choice is the message.
+ */
+@media (max-width: 720px), (max-height: 620px) {
+  .starthere {
+    /* Still centred: pinned to the top they land on the roll's own grid and zoom
+       controls, which reads as two toolbars fighting. */
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .starthere__doors {
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .starthere__door {
+    flex: 1 1 0;
+    padding: var(--space-3);
+    align-items: center;
+    text-align: center;
+  }
+
+  .starthere__detail,
+  .starthere__aside {
+    display: none;
+  }
+
+  .starthere__verb {
+    font-size: var(--text-md);
+  }
+}
