@@ -10,6 +10,9 @@ import SwiftUI
 ///
 /// It says what it is rather than pretending to be the app, so nobody spends ten minutes
 /// wondering why the editor will not open.
+///
+/// Not in a file called `main.swift`: Swift treats that one filename as top-level code,
+/// where `@main` is rejected outright. The name of the file is the whole difference.
 @main
 struct UnpluggedAUHostApp: App {
     var body: some Scene {

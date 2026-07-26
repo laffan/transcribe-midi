@@ -87,15 +87,21 @@ targets:
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
         SWIFT_OBJC_BRIDGING_HEADER: Support/UnpluggedPluginFFI.h
-        # The Rust staticlib, built by the pre-build script below.
+        # The Rust staticlib, built by the pre-build script below. One path per
+        # configuration rather than both everywhere: listing a directory cargo has not
+        # written produces an ld warning on every single build, and a warning you learn to
+        # ignore is worse than no warning at all.
         LIBRARY_SEARCH_PATHS:
           - $(inherited)
           - $(SRCROOT)/../target/aarch64-apple-darwin/release
-          - $(SRCROOT)/../target/aarch64-apple-darwin/debug
         OTHER_LDFLAGS:
           - $(inherited)
           - -lunplugged_plugin
       configs:
+        Debug:
+          LIBRARY_SEARCH_PATHS:
+            - $(inherited)
+            - $(SRCROOT)/../target/aarch64-apple-darwin/debug
         Signed:
           CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAU-Signed.entitlements
           CODE_SIGN_IDENTITY: Apple Development
