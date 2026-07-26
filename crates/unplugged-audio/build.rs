@@ -32,6 +32,18 @@ fn main() {
         return;
     }
 
+    // Probe for the toolchain before anything that needs `xcrun`: a host with no Swift
+    // at all is a cross-`check` from a non-Mac (nothing links, skipping is sound), and
+    // that must not depend on which Apple target is being checked. A *failing* build on
+    // a host that has Swift stays a hard error below.
+    if !host_has_swift() {
+        println!(
+            "cargo:warning=no `swift` toolchain on this host; skipping the Swift build \
+             (fine for `cargo check`, the app cannot link here anyway)"
+        );
+        return;
+    }
+
     let profile = if env::var("PROFILE").as_deref() == Ok("release") { "release" } else { "debug" };
     let target_triple = env::var("TARGET").unwrap_or_default();
 
@@ -99,10 +111,17 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", bin_path.display());
 
-    // `-force_load` rather than `-l`: the Swift archive's symbols are only referenced
-    // from Rust across the FFI boundary, and the final link runs with `-dead_strip`.
-    // Without forcing, the linker has no reason to pull the objects in and every
-    // `unplugged_audio_*` symbol comes back undefined.
+    // IMPORTANT — propagation. `cargo:rustc-link-arg` applies only to link targets of
+    // the package that owns this build script, and the app binary lives in the
+    // `unplugged` package — so a link-arg emitted here silently never reaches the final
+    // link. (The first version of this script used `rustc-link-arg=-Wl,-force_load,…`
+    // and the archive was simply absent from the link line.) `rustc-link-search` and
+    // `rustc-link-lib` are the two directives cargo carries through to dependent
+    // binaries, so everything below uses only those.
+    //
+    // Plain `static=` linkage is enough: Rust references every `unplugged_audio_*`
+    // symbol directly, so the linker pulls the needed objects from the archive on
+    // demand, and `-dead_strip` keeps referenced symbols. No force-load required.
     let swift_lib = bin_path.join("libUnpluggedAudio.a");
     if !swift_lib.is_file() {
         panic!(
@@ -111,7 +130,7 @@ fn main() {
             swift_lib.display()
         );
     }
-    println!("cargo:rustc-link-arg=-Wl,-force_load,{}", swift_lib.display());
+    println!("cargo:rustc-link-lib=static=UnpluggedAudio");
 
     // The C target carries only declarations, so it may or may not be emitted as its own
     // archive depending on SwiftPM version. Link it only if it is there.
@@ -131,15 +150,23 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=AppKit");
     }
 
-    // Swift's runtime ships with the OS (macOS 10.14.4+ / iOS 12.2+), but the linker
-    // still needs to find it and the binary needs an rpath to it at load time.
+    // Search paths for the Swift runtime. The Swift objects carry autolink metadata
+    // (LC_LINKER_OPTION) naming libswiftCore and friends; these `-L`s let the final
+    // link resolve them. At load time the system runtime comes from the dyld shared
+    // cache via absolute install names, so no rpath is needed.
     let swift_runtime = if target_os == "ios" { "iphoneos" } else { "macosx" };
     if let Some(sdk_path) = xcrun_sdk_path(swift_runtime) {
         println!("cargo:rustc-link-search=native={sdk_path}/usr/lib/swift");
-        println!("cargo:rustc-link-arg=-L{sdk_path}/usr/lib/swift");
     }
     println!("cargo:rustc-link-search=native=/usr/lib/swift");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+}
+
+fn host_has_swift() -> bool {
+    Command::new("swift")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn run_swift(package_dir: &Path, profile: &str, extra: &[String], show_bin_path: bool) -> Output {
@@ -150,7 +177,7 @@ fn run_swift(package_dir: &Path, profile: &str, extra: &[String], show_bin_path:
     }
     command
         .output()
-        .unwrap_or_else(|e| panic!("could not run `swift build` — is Xcode installed? ({e})"))
+        .unwrap_or_else(|e| panic!("could not run `swift build`: {e}"))
 }
 
 fn xcrun_sdk_path(sdk: &str) -> Option<String> {
