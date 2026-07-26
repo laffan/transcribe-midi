@@ -1504,6 +1504,39 @@ extension there is the next step; until then this lets the plugin be built, inst
 loaded without waiting on it. The stub window says what it is rather than pretending to be
 the app.
 
+### Four things remembered wrong, one of which the compiler caught
+
+The first build to reach Swift failed on one error and revealed three more that would not
+have failed at all. Worth recording together, because only the first was the compiler's to
+find:
+
+**`AUViewControllerBase` is not an SDK type.** It is a typealias Apple's *sample* project
+defines for itself. The real base class is CoreAudioKit's `AUViewController`. The tell was
+already in the file: a `PlatformViewController` typealias written and then never used —
+written for the job, then the class inherited a different remembered name.
+
+**The render block's parameters were off by one.** `AUInternalRenderBlock` ends with the
+realtime event list and *then* the pull-input block; the code bound the sixth to
+`pullInput`. It also called it with `nil` for the buffer list, which is not optional. Both
+are moot now: a MIDI processor has no audio to pull, so it pulls nothing — and it clears
+the output buffers, which are not guaranteed silent on arrival and are undefined memory
+otherwise.
+
+**`musicalContextBlock`'s arguments were transposed, and would have compiled forever.**
+The order is tempo, numerator, denominator, **beat position**, sample offset, **measure
+downbeat**. Four of the six are `Double`, so reading the beat position out of the measure
+downbeat type-checks perfectly and then follows the bar line instead of the beat. The part
+would have played, quantised to the bar, for no visible reason — the exact class of bug the
+`host_sync` tests cannot catch, because the wrong number arrives before Rust ever sees it.
+
+**The render path allocated.** `var bytes: [UInt8] = [status, pitch, velocity]` per event is
+a heap allocation on the audio thread, in a file whose own comment says it must not contain
+one. Preallocated alongside the event buffer now.
+
+One deliberate addition while in there: `Int64(someDouble)` traps on a non-finite or
+out-of-range value, and a trap in the render block does not fail the plugin — it takes the
+host down with the user's unsaved session. The timestamp conversion is guarded.
+
 ### What was verified
 
 - **302 Rust tests**, clippy clean, both Apple targets compile-check including the new
@@ -1516,9 +1549,10 @@ the app.
 
 Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of likelihood:
 
-1. **The `AUAudioUnit` subclass.** `internalRenderBlock`, `musicalContextBlock` and
+1. ~~**The `AUAudioUnit` subclass.** `internalRenderBlock`, `musicalContextBlock` and
    `transportStateBlock` signatures are the kind of API this project has already got wrong
-   once from memory (`audioUnit` vs `auAudioUnit`, Phase 2).
+   once from memory (`audioUnit` vs `auAudioUnit`, Phase 2).~~ **Confirmed, four times over
+   — see below.** Bodies are still unchecked; the compiler had only reached declarations.
 2. **`AudioComponents` in the extension's Info.plist.** A wrong `type`, `subtype` or
    `manufacturer` registers the component and then never offers it to a host — a failure
    with no error message anywhere.

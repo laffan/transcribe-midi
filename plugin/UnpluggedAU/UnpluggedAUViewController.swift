@@ -3,10 +3,12 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
-public typealias PlatformViewController = NSViewController
+/// `NSHostingController` on macOS, `UIHostingController` on iOS — the same class under two
+/// names, and the only part of this file that genuinely differs between the platforms.
+typealias PlatformHostingController = NSHostingController
 #else
 import UIKit
-public typealias PlatformViewController = UIViewController
+typealias PlatformHostingController = UIHostingController
 #endif
 
 /// The plugin's view.
@@ -20,7 +22,12 @@ public typealias PlatformViewController = UIViewController
 ///
 /// So this pass answers three questions and nothing else: does the plugin load, which
 /// build is it, and which project is it playing.
-public final class UnpluggedAUViewController: AUViewControllerBase, AUAudioUnitFactory {
+///
+/// The base class is CoreAudioKit's `AUViewController` — `NSViewController` on macOS,
+/// `UIViewController` on iOS, and on both the thing that carries the extension plumbing
+/// `AUAudioUnitFactory` needs. (`AUViewControllerBase`, which this originally said, is not
+/// an SDK type at all: it is a typealias Apple's *sample* project defines for itself.)
+public final class UnpluggedAUViewController: AUViewController, AUAudioUnitFactory {
     private var unit: UnpluggedAudioUnit?
     private var model = PluginViewModel()
 
@@ -38,14 +45,17 @@ public final class UnpluggedAUViewController: AUViewControllerBase, AUAudioUnitF
     {
         let unit = try UnpluggedAudioUnit(componentDescription: componentDescription)
         self.unit = unit
-        DispatchQueue.main.async { [weak self] in
+        // The host may call this off the main thread, and the model drives SwiftUI. The
+        // hop is `Task { @MainActor }` rather than `DispatchQueue.main.async` so the
+        // compiler can see the isolation instead of taking our word for it.
+        Task { @MainActor [weak self] in
             self?.model.attach(unit)
         }
         return unit
     }
 
     private func embed() {
-        let root = NSHostingController(rootView: PluginView(model: model))
+        let root = PlatformHostingController(rootView: PluginView(model: model))
         addChild(root)
         root.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(root.view)
@@ -55,9 +65,9 @@ public final class UnpluggedAUViewController: AUViewControllerBase, AUAudioUnitF
             root.view.topAnchor.constraint(equalTo: view.topAnchor),
             root.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        #if os(macOS)
-        root.didMove(toParent: self)
-        #else
+        // `didMove(toParent:)` is UIKit only — `NSViewController.addChild` does the
+        // containment handshake itself, and there is no macOS method of that name.
+        #if !os(macOS)
         root.didMove(toParent: self)
         #endif
 

@@ -22,6 +22,10 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
 
     private var plugin: UnsafeMutableRawPointer?
     private var eventBuffer: UnsafeMutablePointer<UnpluggedRenderedEvent>
+    /// The three bytes of the channel-voice message currently being sent. Preallocated for
+    /// the same reason as `eventBuffer`: building `[UInt8]` per event would put a heap
+    /// allocation in the render path, which is the one thing it must not contain.
+    private var messageBuffer: UnsafeMutablePointer<UInt8>
 
     private var outputBusArray: AUAudioUnitBusArray!
     private var inputBusArray: AUAudioUnitBusArray!
@@ -42,6 +46,8 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
             ),
             count: Self.maxEvents
         )
+        messageBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 3)
+        messageBuffer.initialize(repeating: 0, count: 3)
 
         try super.init(componentDescription: componentDescription, options: options)
 
@@ -68,6 +74,8 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
         }
         eventBuffer.deinitialize(count: Self.maxEvents)
         eventBuffer.deallocate()
+        messageBuffer.deinitialize(count: 3)
+        messageBuffer.deallocate()
     }
 
     // -- buses and MIDI ------------------------------------------------------
@@ -168,13 +176,26 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
         // retain/release per buffer, and ARC traffic is not real-time safe.
         let plugin = self.plugin
         let events = self.eventBuffer
+        let message = self.messageBuffer
         let capacity = UInt32(Self.maxEvents)
 
-        return { [unowned(unsafe) self] actionFlags, timestamp, frameCount, _, _, pullInput, _ in
-            // A MIDI processor still has to pull its input so the chain stays connected.
-            if let pullInput {
-                var flags = actionFlags.pointee
-                _ = pullInput(&flags, timestamp, frameCount, 0, nil)
+        // The block's seven parameters, in order: action flags, timestamp, frame count,
+        // output bus number, output data, the realtime event list, and the pull-input
+        // block. Getting the last two the wrong way round is easy and does not always
+        // fail to compile.
+        return { [unowned(unsafe) self] _, timestamp, frameCount, _, outputData, _, _ in
+            // Nothing is pulled from the input. A MIDI processor has no audio to fetch,
+            // and `AURenderPullInputBlock` has no way to say so — its buffer-list
+            // parameter is not optional.
+            //
+            // The output buffers are cleared rather than left alone: they are not
+            // guaranteed silent on arrival, and handing undefined memory back to a host
+            // that does mix it is a loud failure in someone's session.
+            let buffers = UnsafeMutableAudioBufferListPointer(outputData)
+            for index in 0..<buffers.count {
+                if let data = buffers[index].mData {
+                    memset(data, 0, Int(buffers[index].mDataByteSize))
+                }
             }
 
             guard let plugin else { return noErr }
@@ -189,15 +210,20 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
             if let context = self.musicalContextBlock {
                 var timeSignatureNumerator: Double = 4
                 var timeSignatureDenominator: Int = 4
-                var currentMeasureDownbeat: Double = 0
                 var sampleOffsetToNextBeat: Int = 0
+                var currentMeasureDownbeat: Double = 0
+                // The order is tempo, numerator, denominator, **beat position**, sample
+                // offset, **measure downbeat**. Four of the six are `Double`, so swapping
+                // the beat position with the measure downbeat compiles cleanly and then
+                // follows the bar line instead of the beat — the part plays, and is
+                // quantised to the bar for no visible reason.
                 _ = context(
                     &tempo,
                     &timeSignatureNumerator,
                     &timeSignatureDenominator,
-                    &currentMeasureDownbeat,
+                    &beats,
                     &sampleOffsetToNextBeat,
-                    &beats
+                    &currentMeasureDownbeat
                 )
             }
 
@@ -216,19 +242,29 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
             )
             guard count > 0, let emit = self.midiOutputEventBlock else { return noErr }
 
+            // Sample time within this buffer. `AUEventSampleTime` is absolute, so the
+            // block's own timestamp is the base.
+            //
+            // Converted defensively: `Int64(someDouble)` traps on a value that is not
+            // finite or does not fit, and a trap here does not fail the plugin — it takes
+            // the host down with the user's unsaved session. A timestamp that cannot be
+            // trusted is better read as zero.
+            let sampleTime = timestamp.pointee.mSampleTime
+            let base: AUEventSampleTime =
+                sampleTime.isFinite && sampleTime.magnitude < 9.0e18
+                ? AUEventSampleTime(sampleTime)
+                : 0
+
             for index in 0..<Int(count) {
                 let event = events[index]
                 // Channel voice message: status nibble plus channel. Velocity 0 would be
                 // read as a note-off by some instruments, so a note-off is sent as an
                 // explicit 0x80 rather than as a zero-velocity note-on.
-                let status: UInt8 = (event.kind == 1 ? 0x90 : 0x80) | (event.channel & 0x0F)
-                var bytes: [UInt8] = [status, event.pitch & 0x7F, event.velocity & 0x7F]
+                message[0] = (event.kind == 1 ? 0x90 : 0x80) | (event.channel & 0x0F)
+                message[1] = event.pitch & 0x7F
+                message[2] = event.velocity & 0x7F
 
-                // Sample time within this buffer. `AUEventSampleTime` is absolute, so the
-                // block's own timestamp is the base.
-                let when = AUEventSampleTime(timestamp.pointee.mSampleTime)
-                    + AUEventSampleTime(event.frame_offset)
-                _ = emit(when, 0, bytes.count, &bytes)
+                _ = emit(base + AUEventSampleTime(event.frame_offset), 0, 3, message)
             }
 
             return noErr
