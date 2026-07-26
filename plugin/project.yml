@@ -53,6 +53,10 @@ targets:
         embed: true
     settings:
       base:
+        # Without this the product is named after the target — UnpluggedAUHost.app — which
+        # is what xcodebuild produced and scripts/install-plugin.sh could not find. The
+        # scripts, the Dock and ~/Applications all say "Unplugged AU".
+        PRODUCT_NAME: Unplugged AU
         PRODUCT_BUNDLE_IDENTIFIER: com.unplugged.daw.AUHost
         INFOPLIST_FILE: Support/HostInfo.plist
         CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAUHost.entitlements
