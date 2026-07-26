@@ -12,6 +12,8 @@ import { listen } from "@tauri-apps/api/event";
 import { mockBackend, mockTransport } from "./mockBackend";
 import type {
   AiModelsResponse,
+  CaptureStatus,
+  TranscriptionPreview,
   AiProposal,
   AiStatus,
   CommandError,
@@ -161,6 +163,19 @@ export const api = {
     call<AiProposal>("ai_propose", { track, prompt, selection }),
   aiAccept: () => call<EditorState>("ai_accept"),
   aiReject: () => call<void>("ai_reject"),
+
+  // --- Audio to MIDI (phase 7) ---------------------------------------------
+
+  captureStart: () => call<CaptureStatus>("capture_start"),
+  capturePoll: () => call<CaptureStatus>("capture_poll"),
+  captureTranscribe: (track: number, useProjectTempo: boolean, quantizeTicks: number) =>
+    call<TranscriptionPreview>("capture_transcribe", {
+      track,
+      useProjectTempo,
+      quantizeTicks,
+    }),
+  captureAccept: () => call<EditorState>("capture_accept"),
+  captureCancel: () => call<void>("capture_cancel"),
 
   copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
   shareFile: (path: string) => call<void>("share_file", { path }),

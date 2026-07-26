@@ -22,5 +22,6 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 unplugged-midi = { path = "../crates/unplugged-midi" }
 unplugged-ai = { path = "../crates/unplugged-ai" }
+unplugged-transcribe = { path = "../crates/unplugged-transcribe" }
 serde.workspace = true
 serde_json.workspace = true

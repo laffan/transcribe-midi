@@ -625,3 +625,257 @@ litters the user's documents. Filenames are sanitised on the way in *and* again 
       console reports the rescale.
 - [ ] On iOS: share a track and confirm the sheet appears — **on an iPad especially**,
       since that is the popover-anchor crash path.
+
+---
+
+## Phase 6 — AI-assisted editing
+
+### The model gets a scratch copy, not the project
+
+The model never sees a `Command`, never touches an `EditSession`, and cannot write a note.
+It calls tools against a `Workspace` — a copy of one track's notes — and when the loop
+finishes, the *difference* between that copy and the original becomes one transaction the
+user accepts or rejects.
+
+Three things the spec asks for fall out of that shape rather than having to be enforced:
+
+- AI edits go through the same command layer as a mouse drag, because the transaction is
+  applied by `EditSession::apply` like every other edit.
+- The whole conversation is a single undo step, however many tools ran, because it is a
+  single transaction.
+- The preview diff exists for free, because the diff *is* how the transaction is built.
+
+The transaction is expressed as a delete followed by an insert rather than a `Replace`.
+`Replace` indices refer to the pre-command state, and a transaction that both replaced and
+deleted would need its indices to survive the reordering the replace itself causes.
+Delete-then-insert has no such coupling and is exactly equivalent.
+
+### Notes get identities, but only inside the workspace
+
+`Note` has no id in the domain model — notes are addressed by index — and that is right for
+a piano roll, where indices are stable between gestures. It is wrong across a chain of tool
+calls: transpose a note and its sort position changes, so a selection held as indices would
+silently drift onto different notes between one tool and the next. Inside the workspace
+each note carries an id (its original index, or a fresh one if created), the selection is a
+list of ids, and the diff is computed by id. The ids never leave the workspace.
+
+### The tool surface is a closed enum
+
+The sixteen tools from the spec deserialise straight from the API's
+`{"name": ..., "input": {...}}` block into a `ToolCall` enum. A name the model invented, or
+an argument of the wrong type, fails at that boundary and comes back as a tool result the
+model can read and correct. There is no path from model output to note data that does not
+pass through that type — and a test asserts the schema list and the enum agree, because a
+tool present in one and not the other only fails mid-conversation, at runtime.
+
+Tool errors are returned with `is_error: true` rather than ending the conversation. Half of
+what makes the loop usable is that "1/7 is not a note value" is something the model can act
+on.
+
+### `humanize` takes a seed
+
+A model's output is unpredictable enough without the code under it also being random. The
+PRNG is a seeded xorshift, so the same call twice gives the same notes and the operation is
+testable.
+
+### The key, concretely
+
+- Stored by `Keychain.swift` (`kSecClassGenericPassword`, `kSecAttrAccessibleWhenUnlocked`)
+  — one Security.framework implementation for both targets, over the same C ABI as the rest
+  of the platform surface. A Rust keychain crate would have been a third-party bet on iOS
+  support that cannot be verified without a device.
+- Read immediately before a request and dropped after. It is never returned to `src-tauri`,
+  never serialised into a response, never logged.
+- The UI can learn two things: whether a key exists, and its last four characters.
+- Off-Apple the store is process-local and says so. Writing a key to a file on a dev host
+  would be a security regression dressed up as a convenience.
+
+The pending proposal is held in Rust for the same class of reason. A `Transaction` is raw
+`Command`s — exactly what `EditRequest` exists to keep the webview from constructing — so
+handing one back through the frontend would undo that design. The frontend gets a diff to
+look at and two verbs to decide with, and `ai_accept` refuses if the track changed in the
+meantime.
+
+### Model list
+
+Fetched from `GET /v1/models` when the key is saved, defaulting to the first Sonnet-class
+model returned (which is the newest, since the endpoint returns newest first). If a key can
+reach no Sonnet at all, the first model is used rather than leaving the picker empty.
+
+`thinking: {type: "adaptive"}` is requested and dropped on a 400 that names it. The
+alternative was a table of which model ids accept it, which would be wrong the moment a
+model ships; the user chose the model and should not have to know this.
+
+### `ureq`, and why it is Apple-only
+
+There is no official Anthropic SDK for Rust, so this is raw HTTP. `ureq` is blocking and
+pure Rust, and the tool loop already runs on its own thread.
+
+It is an Apple-only dependency using `native-tls`. rustls' crypto backends (`ring`,
+`aws-lc-rs`) need a C compiler targeting Apple, which the Linux build host does not have —
+pulling one in cost the `cargo check --target aarch64-apple-*` cross-check, which is the
+only thing standing between an API mistake and a Mac build failure. `native-tls` on macOS
+and iOS is Security.framework through pure-Rust bindings: no C to build, and verification
+follows the system trust store, so an enterprise or MDM policy applies here as elsewhere.
+Everything that *interprets* a response is platform-independent and tested; only the socket
+is behind a `cfg`.
+
+### The on-screen keyboard bug
+
+Reported during Phase 5 review and fixed here. `live_note_on` sounded a note and never
+reached the recorder, so only external MIDI was ever captured. The cause was structural:
+two note-on paths, one of which recorded. There is now one, in `input.rs`, and the
+on-screen keyboard and a controller both go through it. The `track` argument is gone — live
+input always goes to the armed track, as external MIDI already did — and velocity comes
+from the Settings value rather than a constant in the frontend.
+
+### What was verified
+
+- **222 Rust tests**, clippy clean, both Apple targets compile-check.
+- Round-trip tests assert the property that matters: for any chain of tool calls, applying
+  the transaction to a real `EditSession` reproduces the workspace exactly, and one undo
+  restores the original.
+- The AI panel and the Settings → AI tab were driven in headless Chromium with no key
+  present; no console errors, no overflow at 390px.
+
+### Not verified — needs a Mac and a key
+
+1. **Every request.** Not one call has been made to the Anthropic API from this code. The
+   request shape, the tool-use loop, the thinking fallback and the model list are all
+   unexercised against the real service.
+2. **The Keychain.** `Keychain.swift` has never been compiled, let alone run.
+3. Whether the tool descriptions actually steer a model well. They are the interface the
+   model programs against and they will need tuning against real prompts.
+
+### What a human should test manually
+
+- [ ] Paste a key into Settings → AI; confirm it is checked before it is stored and that a
+      deliberately wrong key is rejected there rather than at the first edit.
+- [ ] Confirm the model picker fills from the live list and defaults to a Sonnet.
+- [ ] Quit and relaunch; confirm the key survives and is still not readable in the UI.
+- [ ] "Transpose this up a fifth" on a selection — confirm only the selection moves.
+- [ ] "Make it swing" on a straight eighth-note line.
+- [ ] "Add a ii-V-I in C" into an empty track, then "arpeggiate that in sixteenths".
+- [ ] Ask for something impossible ("make it sound like a trumpet") and confirm it says so
+      and changes nothing.
+- [ ] Accept a proposal, then ⌘Z — the whole edit must undo in one step.
+- [ ] Reject a proposal and confirm the roll returns to normal and becomes editable again.
+- [ ] Edit the track while a proposal is on screen is *prevented*; confirm the roll is
+      read-only, then confirm the staleness check by making a proposal, undoing something
+      via the Transport, and pressing Apply.
+- [ ] Remove the key and confirm the panel offers Settings rather than an error.
+
+---
+
+## Phase 7 — Audio to MIDI
+
+### Monophonic, and the UI says so
+
+Polyphonic transcription is a different problem — spectral factorisation or a trained
+model, not a pitch tracker — and a version of this that quietly did its best on a chord
+would produce plausible-looking nonsense. Given a chord, YIN reports one pitch: usually the
+loudest partial, sometimes a difference tone, never the chord. The panel states "one note
+at a time" before you record, and a test asserts that no two produced notes ever start
+together.
+
+### The pipeline
+
+Four stages, each its own module, all pure and all tested against synthetic signals a Linux
+host can generate:
+
+1. **Framing** — 2048-sample windows, 10 ms apart. Long enough for two periods of a low E,
+   short enough that a 16th at 160 bpm spans several frames.
+2. **Pitch** — YIN. Chosen over plain autocorrelation because autocorrelation's peak is
+   biased toward long lags, which shows up as octave errors; YIN's cumulative mean
+   normalisation is exactly the fix. Verified accurate to within half a semitone on every
+   semitone from C2 to C6 on a harmonic-rich tone.
+3. **Onsets** — spectral flux. The only thing that can separate two repetitions of the same
+   note: a re-struck C4 is identical to a held one in the pitch track.
+4. **Assembly** — segment at onsets, at voicing changes, and at sustained pitch breaks;
+   median pitch per segment; then optionally quantise.
+
+The FFT is hand-written (one radix-2 transform, forty lines) and tested against a direct
+DFT, which is the only way to be sure of an FFT without another FFT to compare against.
+
+### Two things that were not obvious
+
+**Flux has to be normalised.** A held tone still produces raw flux — summed across five
+hundred bins, leakage differences between overlapping windows add up to a visible wobble —
+and since a held tone produces *nothing but* that wobble, its peaks stand proud of their own
+local median and get picked as onsets. Dividing by the previous frame's total magnitude
+turns flux from "the spectrum grew by 12 units" into "the spectrum grew by 40%", and the
+same wobble becomes a fraction of a percent while a real attack stays a large fraction of
+one. One scale-free threshold then works at any recording level.
+
+**Autocorrelation cannot tell a period from its multiples.** Every beat that lines up at
+lag L also lines up at 2L, so half-time scores as well as the real tempo and the choice
+between them flips on noise. Taking the shortest lag that scores within 75% of the best
+picks the fundamental. Two further details were needed: the envelope is smoothed by ±2
+frames first, because the beat period is almost never a whole number of frames (160 bpm at
+a 10 ms hop is 37.5) and successive beats otherwise land on alternating frames; and the
+peak is parabolically interpolated, because the lag grid near 120 bpm only offers 117.6 and
+122.4.
+
+An onset at sample zero is undetectable — flux is a change and there is nothing to change
+from. That is not a gap: segmentation opens its first note where the signal becomes voiced
+and only asks the onset detector about boundaries in the middle.
+
+### Capture
+
+A **separate** `AVAudioEngine` from the playback graph. Sharing one would mean
+reconfiguring the running engine to attach an input tap, which on iOS forces the audio
+session into `.playAndRecord` for the life of the app — a permission prompt and a routing
+change for a user who never transcribes anything. Two engines cost one extra render thread
+while recording and nothing when not.
+
+On iOS the session uses `.measurement` mode, which disables the voice processing that would
+otherwise gate and EQ the signal — precisely the processing that would ruin a pitch
+estimate.
+
+**No audio is written to disk and no take is kept.** The spec puts recorded audio tracks out
+of scope and says the microphone exists only to feed transcription, so samples are captured,
+analysed, and dropped at the point the notes are produced. A take is capped at two minutes.
+
+`NSMicrophoneUsageDescription` is in `src-tauri/Info.plist` and
+`com.apple.security.device.audio-input` in `src-tauri/Entitlements.plist` — without the
+first, macOS kills the process the moment it touches the input device rather than showing a
+prompt; without the second, a sandboxed build never reaches the prompt at all.
+
+### What was verified
+
+- **262 Rust tests**, clippy clean, both Apple targets compile-check.
+- The pitch tracker on every semitone C2–C6; the FFT against a direct DFT; onsets on
+  repeated identical notes, on a sustained tone (which must produce none), and on silence;
+  tempo across 72–160 bpm with and without human jitter; and the whole pipeline on melodies,
+  legato slurs, vibrato, leading silence, dynamics and a chord.
+- The transcribe panel in headless Chromium at 390/834/1440 px: no console errors, no
+  overflow.
+
+### Not verified — needs a Mac and a microphone
+
+1. **Every sample.** `Capture.swift` has never been compiled or run. Nothing in this phase
+   has seen audio from a real microphone — only synthetic signals.
+2. Whether the thresholds hold up on a real room recording. Synthetic tones have no noise
+   floor, no reverberation and no breath; `SILENCE_FLOOR`, `MIN_CONFIDENCE` and the onset
+   parameters are the numbers most likely to need adjusting after the first real take.
+3. The macOS permission prompt, and the sandbox entitlement actually granting input access.
+4. iOS: the audio session category change, and whether playback and capture coexist as
+   intended. `NSMicrophoneUsageDescription` still has to be added to the Xcode project that
+   `tauri ios init` generates — the same gap as Phase 5's document types.
+
+### What a human should test manually
+
+- [ ] Press Record and confirm the permission prompt appears with the right explanation.
+- [ ] Deny permission and confirm the panel says so and offers System Settings, rather than
+      showing a generic error.
+- [ ] Hum a simple scale; confirm the pitches are right and the notes land where you sang.
+- [ ] Play the same note four times; confirm four notes, not one.
+- [ ] Play a legato slur between two pitches; confirm two notes.
+- [ ] Play with vibrato; confirm one note, not a stutter of neighbours.
+- [ ] Play a chord and confirm you get a monophonic line rather than something that looks
+      like a chord — this is the behaviour the UI promises.
+- [ ] Record to the click with "Use the project tempo" on; confirm the notes line up.
+- [ ] Record freely with it off; confirm the estimated tempo is plausible.
+- [ ] Accept a transcription, then ⌘Z — one undo step.
+- [ ] On iOS: confirm the metronome still sounds while recording, and that after stopping
+      the route returns to normal (playback should not stay quiet or in the earpiece).

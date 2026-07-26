@@ -13,6 +13,8 @@
 import { MockEditor, MockTransport } from "./mockEditor";
 import type {
   AiModelsResponse,
+  CaptureStatus,
+  TranscriptionPreview,
   AiProposal,
   AiStatus,
   CommandError,
@@ -406,6 +408,30 @@ export const mockBackend = {
     return fail("internal", "AI editing needs the macOS or iOS build");
   },
   ai_reject(): void {},
+
+  // --- Audio to MIDI -------------------------------------------------------
+  //
+  // getUserMedia exists in a browser, but the analysis and the capture both live in
+  // Rust — and a mock that transcribed something would be a second implementation of
+  // the one part of this app that most needs a single source of truth.
+
+  capture_start(): CaptureStatus {
+    return fail("internal", "microphone capture needs the macOS or iOS build");
+  },
+  capture_poll: (): CaptureStatus => ({
+    recording: false,
+    seconds: 0,
+    sample_rate: 0,
+    level: 0,
+    at_limit: false,
+  }),
+  capture_transcribe(): TranscriptionPreview {
+    return fail("internal", "transcription needs the macOS or iOS build");
+  },
+  capture_accept(): EditorState {
+    return fail("internal", "transcription needs the macOS or iOS build");
+  },
+  capture_cancel(): void {},
 };
 
 const inputSettings: InputSettings = {

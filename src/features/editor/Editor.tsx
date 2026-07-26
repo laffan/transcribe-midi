@@ -6,11 +6,14 @@ import type {
   AiProposal,
   EditorState,
   EditRequest,
+  Note,
+  NoteDiff,
   PlatformCapabilities,
   ProjectManifest,
 } from "../../lib/types";
 import { AiPanel } from "./AiPanel";
 import { InterchangeBar } from "./InterchangeBar";
+import { TranscribePanel } from "./TranscribePanel";
 import { ConsolePanel } from "./ConsolePanel";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
 import { PianoRoll } from "./PianoRoll";
@@ -46,6 +49,8 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
   const [keyboardVelocity, setKeyboardVelocity] = useState(100);
   /** An AI proposal being previewed on the roll. Null when there is nothing pending. */
   const [aiPreview, setAiPreview] = useState<AiProposal | null>(null);
+  /** Transcribed notes awaiting review. Drawn on the roll the same way. */
+  const [transcribePreview, setTranscribePreview] = useState<Note[] | null>(null);
 
   // -- load ----------------------------------------------------------------
 
@@ -344,6 +349,14 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     [noteOn, noteOff],
   );
 
+  // Both previews are the same thing to the roll: notes that would exist if accepted.
+  // Only one can be open at a time — each panel clears the other's by replacing it.
+  const rollPreview: NoteDiff | null = aiPreview
+    ? aiPreview.diff
+    : transcribePreview
+      ? { added: transcribePreview, removed: [], changed: [] }
+      : null;
+
   // -- render --------------------------------------------------------------
 
   if (loadError) {
@@ -485,7 +498,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                 playheadTicks={positionTicks}
                 onScrub={seek}
                 loopRegion={loopRegion}
-                preview={aiPreview?.diff ?? null}
+                preview={rollPreview}
               />
             ) : (
               <p className="muted">No track selected.</p>
@@ -555,6 +568,18 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                   setEditor(state);
                   setSelection([]);
                 }}
+              />
+
+              <hr className="inspector__rule" />
+
+              <TranscribePanel
+                trackIndex={selectedTrack}
+                ppq={manifest.ppq}
+                onApplied={(state) => {
+                  setEditor(state);
+                  setSelection(state.affected);
+                }}
+                onPreviewChange={setTranscribePreview}
               />
 
               <hr className="inspector__rule" />

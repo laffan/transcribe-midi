@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Merged into the generated macOS bundle's Info.plist.
+
+  Only the microphone description lives here. Phase 7 records from the microphone to
+  transcribe a line into notes; macOS shows this string in the permission prompt, and
+  without it the prompt does not appear at all — the process is killed the moment it
+  touches the input device, with a crash report rather than an error.
+
+  The iOS equivalent has to go into the Xcode project that `tauri ios init` generates,
+  which does not exist in this repository yet. See DECISIONS.md.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Unplugged records from the microphone only to transcribe what you play into MIDI notes. The audio is analysed and discarded — it is never saved or sent anywhere.</string>
+</dict>
+</plist>

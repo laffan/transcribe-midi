@@ -6,6 +6,7 @@
 //! next buffer, and applies the answer with sample offsets.
 
 pub mod backend;
+pub mod capture;
 pub mod shared;
 
 use std::ffi::c_void;
@@ -15,6 +16,7 @@ use unplugged_core::sequencer::{RenderedEvent, Timeline};
 use unplugged_core::Ticks;
 
 pub use backend::{AudioBackend, AudioError, AudioResult, NullBackend};
+pub use capture::{new_capture, CaptureBackend, NullCapture};
 pub use shared::{AudioCursor, SharedTransport};
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]

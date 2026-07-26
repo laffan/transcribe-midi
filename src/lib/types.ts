@@ -249,6 +249,37 @@ export interface AiProposal {
   empty: boolean;
 }
 
+// --- Audio to MIDI (phase 7) -----------------------------------------------
+
+export interface CaptureStatus {
+  recording: boolean;
+  seconds: number;
+  sample_rate: number;
+  /** Peak level since the last poll, 0–1. */
+  level: number;
+  at_limit: boolean;
+}
+
+export interface DetectedNote {
+  note: Note;
+  /** Where it was played, before quantisation. */
+  start_seconds: number;
+  duration_seconds: number;
+  confidence: number;
+  /** Distance from equal temperament, in cents. */
+  cents_off: number;
+}
+
+export interface TranscriptionPreview {
+  notes: DetectedNote[];
+  tempo_bpm: number;
+  tempo_estimated: boolean;
+  tempo_confidence: number;
+  duration_seconds: number;
+  pitched_fraction: number;
+  warning: string | null;
+}
+
 export const MIN_TEMPO = 20;
 export const MAX_TEMPO = 300;
 export const DEFAULT_TEMPO = 120;

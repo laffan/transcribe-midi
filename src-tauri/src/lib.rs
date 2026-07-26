@@ -6,6 +6,7 @@ mod input;
 mod interchange;
 mod platform;
 mod state;
+mod transcribe;
 
 use std::time::Duration;
 
@@ -163,6 +164,12 @@ pub fn run() {
             ai::ai_propose,
             ai::ai_accept,
             ai::ai_reject,
+            // Audio to MIDI (phase 7)
+            transcribe::capture_start,
+            transcribe::capture_poll,
+            transcribe::capture_transcribe,
+            transcribe::capture_accept,
+            transcribe::capture_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Unplugged");

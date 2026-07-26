@@ -1,0 +1,10 @@
+[package]
+name = "unplugged-transcribe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Monophonic audio-to-MIDI transcription. Pure DSP, no platform code, no audio I/O."
+
+[dependencies]
+unplugged-core = { path = "../unplugged-core" }
+serde.workspace = true

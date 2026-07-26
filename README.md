@@ -3,15 +3,16 @@
 A MIDI-sequencing DAW with AI-assisted editing, audio-to-MIDI transcription, a notation
 view, and AUv3 instrument hosting. macOS (aarch64) and iOS.
 
-> **Status: Phase 5 of 9.** Project CRUD, the audio engine and transport, the piano roll
-> and undoable command layer, external MIDI input with loop recording, and SMF
-> import/export/sharing are built. AI editing, audio-to-MIDI transcription, the notation
-> view and AUv3 hosting are not — each unbuilt panel is labelled in the UI with the phase
-> that fills it in.
+> **Status: Phase 7 of 9.** Project CRUD, the audio engine and transport, the piano roll
+> and undoable command layer, external MIDI input with loop recording, SMF
+> import/export/sharing, AI-assisted editing and monophonic audio-to-MIDI are built. The
+> notation view and AUv3 hosting are not.
 >
-> The audio engine has been verified making sound on real hardware. The Phase 4 and 5
-> Swift (MIDI input, share sheet, drag-out) has not — see [DECISIONS.md](./DECISIONS.md)
-> for exactly what that leaves unverified.
+> The audio engine has been verified making sound on real hardware. Nothing else written
+> in Swift has been compiled — MIDI input, the share sheet, drag-out, the Keychain and
+> microphone capture are all unverified — and no request has ever been made to the
+> Anthropic API from this code. See [DECISIONS.md](./DECISIONS.md) for exactly what that
+> leaves untested and what a human needs to check.
 
 ## Stack
 
@@ -23,6 +24,8 @@ view, and AUv3 instrument hosting. macOS (aarch64) and iOS.
 | MIDI ports | `midir` (CoreMIDI) |
 | SMF read/write | `midly` |
 | Audio | AVAudioEngine via a Swift plugin (Phase 2) |
+| AI | Anthropic Messages API over raw HTTP, from Rust |
+| Transcription | Hand-written DSP (YIN, spectral flux), no dependencies |
 
 All MIDI I/O and audio synthesis live in Rust and Swift. WKWebView has no Web MIDI API
 on either target and its Web Audio implementation is not suitable for timing-critical
@@ -40,14 +43,19 @@ crates/unplugged-core/   Domain model, sequencer, command layer, SMF, persistenc
 crates/unplugged-audio/  Audio binding: one Rust-facing API, C ABI to Swift,
                          null backend off-Apple.
 crates/unplugged-midi/   External MIDI input (CoreMIDI), null backend off-Apple.
-swift/UnpluggedAudio/    AVAudioEngine graph + render callback, and the phase 5
-                         platform surface (share sheet, pasteboard, drag-out).
-                         One package, linked into both targets.
+crates/unplugged-ai/     Anthropic client and tool loop. The API key never leaves
+                         this crate.
+crates/unplugged-transcribe/
+                         Monophonic audio-to-MIDI. Pure DSP, no audio I/O.
+swift/UnpluggedAudio/    AVAudioEngine graph + render callback, microphone capture,
+                         and the platform surface (share sheet, pasteboard,
+                         drag-out, Keychain). One package, both targets.
 src-tauri/               Tauri app: thin command wrappers.
 src/                     React frontend.
   lib/                   Typed API layer, theme, console store.
   features/projects/     Project picker (the launch screen).
-  features/editor/       Piano roll, transport, on-screen keyboard, console.
+  features/editor/       Piano roll, transport, on-screen keyboard, AI panel,
+                         transcription panel, console.
   features/settings/     Settings modal.
   styles/tokens.css      Design tokens — the single source of truth for colour and type.
 ```
@@ -77,7 +85,7 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 140 tests (115 core + 14 audio + 7 midi + 4 app)
+cargo test --workspace          # 262 tests
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
@@ -118,6 +126,31 @@ A project is a directory under the app data dir:
 `project.json` is authoritative for tempo, time signature and PPQ — the per-track MIDI
 files deliberately do not duplicate them. Writes are atomic (temp file + rename), so an
 interrupted save leaves the previous project intact.
+
+## AI editing
+
+Describe an edit in the inspector and the change previews as a diff before it is applied —
+green is new, red is going, amber is moving. Accept and it becomes one undo step.
+
+The model never touches note data directly. It calls a closed set of sixteen tools against
+a scratch copy of the track; the difference between that copy and the original becomes a
+single transaction through the same command layer as a mouse drag. Anything it invents
+fails at the tool boundary and comes back to it as an error.
+
+The Anthropic API key lives in the platform Keychain. Every request originates in Rust —
+the key is read immediately before a call and dropped after, and the interface can learn
+only that a key exists and its last four characters. The model list is fetched from
+`GET /v1/models` at runtime rather than hardcoded.
+
+## Audio to MIDI
+
+Play or hum **one note at a time** and the line becomes notes. Polyphonic transcription is
+out of scope in this version: it is a different problem, and a pitch tracker handed a chord
+returns confident nonsense rather than a chord.
+
+The pipeline is YIN pitch detection, spectral-flux onsets and autocorrelation tempo
+estimation, all hand-written and tested against synthetic signals. Nothing is written to
+disk — the microphone exists only to feed this, so the audio is analysed and dropped.
 
 ## Out of scope
 

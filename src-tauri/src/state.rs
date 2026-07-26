@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use unplugged_audio::AudioEngine;
+use unplugged_audio::{AudioEngine, CaptureBackend};
 use unplugged_core::command::EditSession;
 use unplugged_core::recorder::Recorder;
 use unplugged_core::sequencer::Timeline;
@@ -83,6 +83,10 @@ pub struct AppState {
     /// Where `ai.json` lives. The projects themselves are the store's business.
     pub data_dir: PathBuf,
     pub ai_prefs: Mutex<crate::ai::AiPreferences>,
+    /// Microphone input for Phase 7. Separate from `audio`: it is a different engine,
+    /// started only while transcribing.
+    pub mic: Box<dyn CaptureBackend>,
+    pub capture: crate::transcribe::SharedCapture,
     /// The AI proposal awaiting accept or reject.
     ///
     /// Held here rather than sent to the frontend on purpose: it contains a
@@ -100,6 +104,8 @@ impl AppState {
             open: Mutex::new(None),
             input: Arc::new(Mutex::new(InputState::new())),
             ai_prefs: Mutex::new(crate::ai::AiPreferences::load(&app_data_dir)),
+            mic: unplugged_audio::new_capture(),
+            capture: Mutex::new(Default::default()),
             pending_ai: Mutex::new(None),
             data_dir: app_data_dir,
         }

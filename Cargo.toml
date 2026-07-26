@@ -4,6 +4,7 @@ members = [
     "crates/unplugged-audio",
     "crates/unplugged-midi",
     "crates/unplugged-ai",
+    "crates/unplugged-transcribe",
     "src-tauri",
 ]
 resolver = "2"

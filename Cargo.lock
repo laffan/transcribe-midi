@@ -4037,6 +4037,7 @@ dependencies = [
  "unplugged-audio",
  "unplugged-core",
  "unplugged-midi",
+ "unplugged-transcribe",
 ]
 
 [[package]]
@@ -4074,6 +4075,14 @@ name = "unplugged-midi"
 version = "0.1.0"
 dependencies = [
  "midir",
+ "serde",
+ "unplugged-core",
+]
+
+[[package]]
+name = "unplugged-transcribe"
+version = "0.1.0"
+dependencies = [
  "serde",
  "unplugged-core",
 ]
