@@ -24,8 +24,9 @@
 	<string>Unplugged</string>
 	<key>CFBundleName</key>
 	<string>Unplugged</string>
+	<!-- Set in project.yml, where the prefix rule it must obey is explained. -->
 	<key>CFBundleIdentifier</key>
-	<string>com.unplugged.daw.AUv3</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>

@@ -80,7 +80,12 @@ targets:
       - path: UnpluggedAU
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.unplugged.daw.AUv3
+        # An embedded extension's bundle id must be prefixed by its container app's id —
+        # xcodebuild's ValidateEmbeddedBinary step rejects the build otherwise. So the id
+        # follows whichever app the extension ships inside: today the stub host, and when
+        # the Tauri app (com.unplugged.daw) learns to embed it, com.unplugged.daw.AUv3.
+        # Hosts do not care — they identify an AU by type/subtype/manufacturer.
+        PRODUCT_BUNDLE_IDENTIFIER: com.unplugged.daw.AUHost.AUv3
         INFOPLIST_FILE: Support/Info.plist
         CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAU.entitlements
         CODE_SIGN_IDENTITY: "-"
