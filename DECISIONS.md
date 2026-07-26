@@ -879,3 +879,196 @@ prompt; without the second, a sandboxed build never reaches the prompt at all.
 - [ ] Accept a transcription, then ⌘Z — one undo step.
 - [ ] On iOS: confirm the metronome still sounds while recording, and that after stopping
       the route returns to normal (playback should not stay quiet or in the earpiece).
+
+---
+
+## Re-centring: what this app is actually for
+
+Stated plainly, because it should have been stated first:
+
+1. **Turning what you play into MIDI.**
+2. **Changing that MIDI by describing what you want.**
+
+Everything else serves those two. The build so far does not reflect that. Both features
+were added as panels in the Track Inspector, which means they sit in a scrolling sidebar
+*below* the name field, the channel readout, a keyboard-shortcut cheat sheet and the
+import/export controls — at 1440px they are below the fold. The app currently presents
+itself as a piano-roll editor that happens to have two extras, and that is backwards.
+
+This is a re-prioritisation, not a removal. The piano roll stays and stays good: both
+headline features produce notes the user did not type, so there has to be somewhere to see
+what arrived and fix the last five percent. That is also why every AI edit and every
+transcription is previewed as a diff and lands as one undo step. The roll is the
+**verification surface**, not the product.
+
+### What changes
+
+- **A persistent prompt bar**, spanning the editor above the transport, focusable from the
+  keyboard. Not a panel you scroll to. This single move is what turns "AI" from a feature
+  into the primary interaction.
+- **Capture becomes a transport peer.** Today MIDI recording — by far the least distinctive
+  thing here — has a transport button, and audio-to-MIDI is buried. Listen gets equal
+  billing and its own key.
+- **A new project opens with two doors**, not an empty grid: record something, or describe
+  something. An empty piano roll and a mouse is how a MIDI editor introduces itself.
+- **Transformation history becomes visible.** If prompting is the main verb, the chain
+  matters — "quantised 1/16" → "harmonised a third" → "humanised" — and today that exists
+  only as labels on an undo stack nobody opens.
+- **Vocabulary.** "Track Inspector" is DAW furniture. Name the surfaces after the verbs.
+
+### Two functional gaps this exposes
+
+**Transcription is microphone-only.** For an app whose first job is audio-to-MIDI, being
+unable to open a `.wav` or a voice memo is a hole, not a missing convenience — and once
+this is a plugin, "point it at an audio track" becomes the *dominant* case and the
+microphone the minority one. Needs an audio-file decode path (`AVAudioFile` on Apple) into
+the existing pipeline.
+
+**The AI cannot create a track.** "Add a bass line under this" is close to the most natural
+sentence a user of this app will type, and the tool surface cannot express it: every tool
+operates on one track's notes. Both this and "transcribe into a new track" want a target
+concept that Phase 6 does not have.
+
+---
+
+## The transcription editor, and the decision it reverses
+
+The intended shape: a waveform view with the detected notes drawn over it — the measured
+pitch track as a continuous line, the notes as adjustable boxes on top — so a wrong note is
+corrected against the evidence rather than by ear against a grid.
+
+This is the right idea for a transcription-first app, and it makes several things that were
+speculative into requirements.
+
+### It reverses "no audio is kept"
+
+Phase 7 states, twice and approvingly, that the audio is analysed and dropped, and calls
+that "the point at which *the microphone exists only to feed transcription* stops being a
+claim". **A waveform editor cannot work that way**, so that decision is superseded.
+
+The distinction worth keeping is narrower but still real: audio is retained as **evidence
+for a transcription**, not as material in the arrangement. It is attached to the take, not
+to the timeline. It is not mixed, not exported, not bounced, and does not become an audio
+track. It is played back only inside the transcription editor, to check a note against the
+sound it came from. "Recorded audio tracks" stays out of scope; "the audio behind this
+transcription" comes in.
+
+That has consequences the current code does not have: takes need somewhere to live in the
+project directory, a size budget, and a lifecycle (a take whose notes have been discarded
+should not persist forever).
+
+### Most of what it needs is already computed and thrown away
+
+`transcribe()` builds a per-frame track of pitch, confidence and level, and an onset list,
+and returns only the notes. Those frames *are* the overlay:
+
+- the per-frame pitch is the continuous line the notes sit on;
+- confidence drives how firmly a note is drawn, and marks the ones worth checking;
+- onsets are where a note boundary should snap when dragged;
+- `cents_off` — already computed per note, currently only a warning count — becomes the
+  vertical offset between the drawn note and the measured pitch, which is exactly the
+  information a user needs to decide whether a note is wrong or the *source* was flat.
+
+Exposing that is close to free. What is genuinely new: a min/max peak pyramid for drawing
+the waveform at any zoom (pure, cheap, testable in `unplugged-transcribe`), audio playback
+scrubbing, and the overlay view itself — a second canvas sharing the piano roll's geometry
+module.
+
+### And it makes re-derivation the natural model
+
+Once the audio and the frames are kept, the transcription settings stop being burned in at
+commit. Changing the quantise grid, switching between the estimated and the project tempo,
+adjusting the confidence threshold, or splitting a note at an onset all become cheap
+*re-derivations* of the same take rather than a reason to record again. Today every one of
+those is a re-record.
+
+That is the change that makes this structurally not a MIDI editor with a transcribe button:
+a track gains a **provenance** — this take, these settings, then these edits — and the
+first two stay live.
+
+---
+
+## Phase 9 revised — Unplugged as a plugin, not a host
+
+The original Phase 9 was "AUv3 hosting". That is inverted: Unplugged should *be* the plugin,
+loaded into Logic Pro and Ableton Live. Hosting other people's instruments is dropped.
+
+### The format is AUv3, and "VST" would not have worked
+
+| | Logic Pro | Live (macOS) | Live (Windows) | iPad |
+|---|---|---|---|---|
+| **AUv3** | yes | yes | — | yes |
+| VST3 | **never** | yes | yes | — |
+| CLAP | no | no | no | — |
+
+Logic has never loaded VST and does not intend to; Audio Units only. So AUv3 is the one
+format that reaches both named DAWs, and it reaches iPad hosts for free. VST3 buys Windows
+and nothing else, and is deferred rather than refused.
+
+### The real problem is getting MIDI *out* of a plugin
+
+This app's product is notes in the host's timeline, and plugins are generally not permitted
+to write there. Three routes, and shipping all three is the honest answer:
+
+1. **AUv3 MIDI processor** (`aumi`) in Logic's MIDI FX slot. Real-time MIDI out, native,
+   exactly what this app is.
+2. **AUv3 instrument** (`aumu`). Loads everywhere and plays through the built-in sampler,
+   but most hosts will not capture its MIDI output.
+3. **Drag the region out as `.mid`.** Works in every DAW, needs no host cooperation, and is
+   already built (`unplugged_platform_begin_file_drag`, Phase 5).
+
+One thing to verify against a real install rather than assume: whether Ableton Live hosts
+MIDI-effect plugins at all. The long-standing answer has been no. If that still holds, Live
+gets (2) and (3), and (1) is Logic-specific.
+
+### What survives, and why that is not luck
+
+- `unplugged-core`, `unplugged-transcribe` and `unplugged-ai` are pure and move unchanged.
+  That is the payoff for keeping platform code out of them from Phase 0.
+- `unplugged_audio_render` is already allocation-free, lock-free, and shaped as *"given N
+  frames, which events fire and at what sample offset"* — which is precisely an AUv3
+  `internalRenderBlock`. `CRenderedEvent` already carries frame offset, pitch, velocity and
+  channel, so it maps onto `MIDIOutputEventBlock` directly.
+- The React UI survives because `src/lib/api.ts` is the only IPC seam. Two files in the
+  whole frontend import from `@tauri-apps`.
+
+### What has to be rebuilt
+
+- **Tauri cannot be a plugin.** It owns the process and its event loop; a plugin is a dylib
+  handed an `NSView`. The UI moves into a `WKWebView` inside an `AUViewController`, with
+  `invoke` replaced by a `WKScriptMessageHandler` bridge. `src-tauri`'s command bodies
+  survive as ordinary functions; it is the shell that goes.
+- **The host owns the clock.** `AudioCursor` currently owns a sample cursor and derives
+  ticks. In a plugin, tempo and position arrive per-buffer from `musicalContextBlock`. A
+  contained change, but a real one, and it needs its own tests.
+- **State lives in the host session**, not the app data dir. `Project` is already serde, so
+  `fullState` is nearly free — but `ProjectStore` needs a sibling that serialises to a blob.
+  Retained audio takes make that blob large, which is a design constraint on the previous
+  section.
+- **Keychain across the app/extension boundary** needs an app group and a keychain access
+  group.
+
+Distribution falls out: on Apple an AUv3 ships as an app extension inside a container app,
+so one Xcode project with an app target and an extension target — both linking the same
+Rust staticlib — produces the standalone and the plugin together.
+
+### Correction to the Phase 0 record
+
+Phase 0 chose AVAudioEngine over `cpal` **because AUv3 hosting expects an AVAudioEngine
+graph**. That justification is now void. The choice happens to survive on its merits — the
+standalone still wants AVAudioEngine, and the plugin will not use it at all — so nothing
+needs to change. But the reasoning recorded at the time is no longer the reasoning that
+holds, and if Windows had ever been in scope, `cpal` would have been the better call.
+
+### Revised phase order
+
+| | |
+|---|---|
+| **8** | Re-centring: prompt bar, capture as a transport peer, first-run doors, visible history, audio-file input, new-track targeting |
+| **9** | The transcription editor: retained takes, exposed frames, waveform + pitch overlay, re-derivation |
+| **10** | AUv3 plugin: extension target, host transport, MIDI out, webview bridge |
+| **11** | Notation view + MusicXML export |
+
+Notation moves last deliberately. It is a *view* on notes rather than a way of making or
+changing them, and building it before the re-centring would deepen exactly the emphasis
+this section exists to correct.
