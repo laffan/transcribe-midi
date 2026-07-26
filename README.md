@@ -8,7 +8,7 @@ Unplugged is about two things:
 
 Everything else — the piano roll, the transport, the file handling, the sampler — exists
 to serve those two, and to let you check their work. macOS (aarch64) and iOS, standalone
-and (from Phase 9) as an AUv3 plugin inside Logic Pro and Ableton Live.
+and (from Phase 10) as an AUv3 plugin inside Logic Pro and Ableton Live.
 
 The piano roll is deliberately not the product. Both of the things above produce notes you
 did not type, so you need somewhere to *see* what arrived and fix the last five percent —
@@ -96,14 +96,16 @@ crates/unplugged-ai/     Anthropic client and tool loop. The API key never leave
 crates/unplugged-transcribe/
                          Monophonic audio-to-MIDI. Pure DSP, no audio I/O.
 swift/UnpluggedAudio/    AVAudioEngine graph + render callback, microphone capture,
-                         and the platform surface (share sheet, pasteboard,
-                         drag-out, Keychain). One package, both targets.
+                         take playback, audio-file decoding, and the platform
+                         surface (share sheet, pasteboard, drag-out, Keychain).
+                         One package, both targets.
+scripts/                 Build, install and verify the plugin.
 src-tauri/               Tauri app: thin command wrappers.
 src/                     React frontend.
   lib/                   Typed API layer, theme, console store.
   features/projects/     Project picker (the launch screen).
-  features/editor/       Piano roll, transport, on-screen keyboard, AI panel,
-                         transcription panel, console.
+  features/editor/       Piano roll, transport, prompt bar, review bar,
+                         transcription editor, history, on-screen keyboard.
   features/settings/     Settings modal.
   styles/tokens.css      Design tokens — the single source of truth for colour and type.
 ```
@@ -152,7 +154,7 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 270 tests
+cargo test --workspace          # 273 tests
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
