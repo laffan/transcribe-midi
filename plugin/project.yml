@@ -17,6 +17,16 @@ options:
     macOS: "12.0"
   createIntermediateGroups: true
 
+# Three configurations, because signing is the thing that differs, not the code.
+#
+# Debug and Release are ad-hoc signed and need no Apple Developer account. `Signed` uses
+# the App Group, which requires a paid membership and a provisioning profile — see
+# Support/UnpluggedAU.entitlements for why that cannot be the default.
+configs:
+  Debug: debug
+  Release: release
+  Signed: release
+
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
@@ -47,10 +57,21 @@ targets:
         INFOPLIST_FILE: Support/HostInfo.plist
         CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAUHost.entitlements
         # Ad-hoc: a locally installed plugin does not need a paid team, and requiring one
-        # to iterate would be a poor trade.
+        # to iterate would be a poor trade. Ad-hoc signing grants the sandbox and sandbox
+        # exceptions; what it cannot grant is the App Group, which is why that lives in
+        # the `Signed` configuration below.
         CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
         CODE_SIGNING_REQUIRED: YES
         CODE_SIGNING_ALLOWED: YES
+      configs:
+        Signed:
+          CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAUHost-Signed.entitlements
+          CODE_SIGN_IDENTITY: Apple Development
+          CODE_SIGN_STYLE: Automatic
+          # Passed on the xcodebuild command line by scripts/install-plugin.sh --signed.
+          DEVELOPMENT_TEAM: $(UNPLUGGED_TEAM_ID)
 
   UnpluggedAU:
     type: app-extension
@@ -63,6 +84,8 @@ targets:
         INFOPLIST_FILE: Support/Info.plist
         CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAU.entitlements
         CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
         SWIFT_OBJC_BRIDGING_HEADER: Support/UnpluggedPluginFFI.h
         # The Rust staticlib, built by the pre-build script below.
         LIBRARY_SEARCH_PATHS:
@@ -72,6 +95,12 @@ targets:
         OTHER_LDFLAGS:
           - $(inherited)
           - -lunplugged_plugin
+      configs:
+        Signed:
+          CODE_SIGN_ENTITLEMENTS: Support/UnpluggedAU-Signed.entitlements
+          CODE_SIGN_IDENTITY: Apple Development
+          CODE_SIGN_STYLE: Automatic
+          DEVELOPMENT_TEAM: $(UNPLUGGED_TEAM_ID)
     dependencies:
       - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework

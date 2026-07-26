@@ -1,30 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  App Sandbox entitlements for the macOS build.
+  The macOS app's entitlements, for local development.
 
-  `device.audio-input` is what lets a sandboxed build reach the microphone at all; the
-  usage description in Info.plist governs the prompt, but without this the prompt is
-  never reached. `user-selected.read-write` covers Export and Import, which reach the
-  filesystem only through a save or open panel.
+  NO APP SANDBOX HERE, DELIBERATELY
 
-  The App Group must match plugin/Support/UnpluggedAU.entitlements exactly. It is what
-  lets the AUv3 extension read the projects this app writes — an extension otherwise gets
-  its own sandboxed container and sees an empty list with no error to explain why.
+  The sandbox is not the problem — the App Group is. It is provisioning-profile-backed, so
+  an ad-hoc-signed build cannot have one, and App Groups cannot be registered on a free
+  Apple ID at all. Without a group, a sandboxed app writes into its own container and the
+  AUv3 extension cannot read a byte of it: an empty project list in Logic, with nothing
+  anywhere to say why.
+
+  So the ad-hoc arrangement puts the app's write path outside a container. The app writes
+  to `~/Library/Application Support/Unplugged` (see src/shared_container.rs) and the
+  extension — which stays sandboxed — reads it through the read-only temporary exception in
+  plugin/Support/UnpluggedAU.entitlements.
+
+  `device.audio-input` stays regardless: under the hardened runtime it is what lets a
+  signed build reach the microphone. The usage description in Info.plist governs the
+  prompt, but without this the prompt is never reached.
+
+  The shipping arrangement — sandbox and App Group on the app, the extension and the host
+  stub alike — is in Entitlements-Signed.plist, and needs a paid Apple Developer
+  membership:
+
+      npm run tauri build -- --config src-tauri/tauri.signed.conf.json
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>group.com.unplugged.daw</string>
-    </array>
 </dict>
 </plist>

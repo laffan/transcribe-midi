@@ -25,10 +25,22 @@
 # Requires xcodegen (brew install xcodegen). The Xcode project is generated from
 # plugin/project.yml rather than checked in — a pbxproj is unreviewable in a diff.
 #
+# SIGNING
+#
+# The default build is ad-hoc signed and needs no Apple Developer account. It is sandboxed,
+# and reaches the app's projects through a read-only sandbox exception rather than an App
+# Group — App Groups are provisioning-profile-backed, cannot be registered on a free Apple
+# ID, and make `xcodebuild` refuse to build at all without a team.
+#
+# With a paid membership, `--signed` builds the shipping arrangement instead: the App
+# Group, properly signed. It needs a team id, which is the ten-character string in
+# Xcode > Settings > Accounts, or `security find-identity -v -p codesigning`.
+#
 # Usage:
 #   scripts/install-plugin.sh            # release build, install, register, verify
 #   scripts/install-plugin.sh --debug    # faster build, for iterating
 #   scripts/install-plugin.sh --no-build # install what is already built
+#   UNPLUGGED_TEAM_ID=XXXXXXXXXX scripts/install-plugin.sh --signed
 
 set -euo pipefail
 
@@ -42,8 +54,9 @@ DO_BUILD=1
 for arg in "$@"; do
   case "$arg" in
     --debug) CONFIGURATION="debug" ;;
+    --signed) CONFIGURATION="signed" ;;
     --no-build) DO_BUILD=0 ;;
-    -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -72,8 +85,25 @@ say "Installing Unplugged ${VERSION} (${COMMIT}), ${CONFIGURATION}"
 # Build
 # ---------------------------------------------------------------------------
 
-XCODE_CONFIG="Release"
-[[ "$CONFIGURATION" == "debug" ]] && XCODE_CONFIG="Debug"
+case "$CONFIGURATION" in
+  debug) XCODE_CONFIG="Debug" ;;
+  signed) XCODE_CONFIG="Signed" ;;
+  *) XCODE_CONFIG="Release" ;;
+esac
+
+# Signing settings are passed on the command line rather than baked into project.yml,
+# because a command-line build setting applies to every target — which is exactly right
+# for the team id and exactly wrong for the entitlements file, since the two targets need
+# different ones. The entitlements stay per-target in project.yml.
+SIGNING_ARGS=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual)
+if [[ "$CONFIGURATION" == "signed" ]]; then
+  [[ -n "${UNPLUGGED_TEAM_ID:-}" ]] || die \
+    "--signed needs a team id: UNPLUGGED_TEAM_ID=XXXXXXXXXX scripts/install-plugin.sh --signed"
+  SIGNING_ARGS=("UNPLUGGED_TEAM_ID=$UNPLUGGED_TEAM_ID")
+  say "Signing with team $UNPLUGGED_TEAM_ID (App Group build)"
+else
+  say "Ad-hoc signing (no App Group — see plugin/Support/UnpluggedAU.entitlements)"
+fi
 
 if [[ "$DO_BUILD" == "1" ]]; then
   command -v xcodegen >/dev/null 2>&1 || die "xcodegen is not installed — brew install xcodegen"
@@ -88,7 +118,7 @@ if [[ "$DO_BUILD" == "1" ]]; then
     -scheme UnpluggedAUHost \
     -configuration "$XCODE_CONFIG" \
     -derivedDataPath "$REPO_ROOT/target/xcode" \
-    CODE_SIGN_IDENTITY=- \
+    "${SIGNING_ARGS[@]}" \
     build
 fi
 

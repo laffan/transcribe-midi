@@ -1,6 +1,7 @@
 import AudioToolbox
 import AVFoundation
 import CoreAudioKit
+import Darwin
 import Foundation
 
 /// The Audio Unit itself.
@@ -238,19 +239,36 @@ public final class UnpluggedAudioUnit: AUAudioUnit {
 
     /// Where projects live, shared between the app and this extension.
     ///
-    /// An App Group is the only way an extension and its container app can see the same
-    /// files — an extension otherwise gets its own sandboxed container. If the group is
-    /// missing or misconfigured this falls back to the extension's own directory, which
-    /// shows an empty project list rather than crashing: a plugin that will not load is a
-    /// worse failure than one that says it has nothing to play.
+    /// Two arrangements, and which one is in play depends only on how the build was signed.
+    ///
+    /// **Signed** (`--signed`): an App Group. That is the only way a sandboxed extension
+    /// and a sandboxed app can see the same files, and it is what ships.
+    ///
+    /// **Ad-hoc**: no group — it needs a provisioning profile — so both sides use a fixed
+    /// path under the real home directory, which the extension reaches through the
+    /// read-only sandbox exception in its entitlements. `home_data_dir()` in
+    /// src-tauri/src/shared_container.rs writes to the same path, and the entitlement
+    /// names it a third time. All three must agree or the project list is silently empty.
     private static func sharedDataDirectory() -> String {
         let group = "group.com.unplugged.daw"
         if let shared = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
             return shared.appendingPathComponent("Unplugged", isDirectory: true).path
         }
-        let fallback = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("Unplugged", isDirectory: true)
-        return fallback?.path ?? NSTemporaryDirectory()
+        return homeRelativeDataDirectory()
+    }
+
+    /// `~/Library/Application Support/Unplugged`, against the **real** home directory.
+    ///
+    /// Deliberately not `FileManager.urls(for: .applicationSupportDirectory ...)`, and not
+    /// `NSHomeDirectory()`: inside the sandbox both answer with *this extension's own
+    /// container*, which is precisely the directory the app cannot write to — so the
+    /// project list would be empty and the reason invisible. `getpwuid` reports the
+    /// account's home regardless of the container, which is what the sandbox exception is
+    /// written against.
+    private static func homeRelativeDataDirectory() -> String {
+        guard let entry = getpwuid(getuid()), let home = entry.pointee.pw_dir else {
+            return NSTemporaryDirectory()
+        }
+        return String(cString: home) + "/Library/Application Support/Unplugged"
     }
 }

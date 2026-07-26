@@ -95,6 +95,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 4. Whether it will have anything to play
+# ---------------------------------------------------------------------------
+#
+# A plugin that loads and shows an empty project list is the failure this section exists
+# to diagnose, because it looks exactly like "the app has never run". Two arrangements can
+# put the app's projects within the extension's reach, and which one is in play is decided
+# entirely by how the build was signed.
+
+say "The projects directory"
+SHARED_DIR="$HOME/Library/Application Support/Unplugged/projects"
+if [[ -d "$SHARED_DIR" ]]; then
+  COUNT="$(find "$SHARED_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  ok "$SHARED_DIR — $COUNT project(s)"
+else
+  bad "nothing at $SHARED_DIR"
+  echo "     Run the standalone app once and make a project. Its stderr says where it"
+  echo "     settled; anything other than this path means the plugin cannot reach it."
+fi
+
+if [[ -d "$APP/Contents/PlugIns/UnpluggedAU.appex" ]]; then
+  ENT="$(codesign -d --entitlements - --xml "$APP/Contents/PlugIns/UnpluggedAU.appex" 2>/dev/null \
+    | plutil -convert xml1 -o - - 2>/dev/null || true)"
+  if grep -q 'application-groups' <<<"$ENT"; then
+    ok "signed build — the extension uses the App Group"
+  elif grep -q 'temporary-exception.files.home-relative-path' <<<"$ENT"; then
+    ok "ad-hoc build — the extension reads the path above through a sandbox exception"
+  else
+    warn "the extension has neither an App Group nor a read exception; it will see no projects"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # The bit that actually settles arguments
 # ---------------------------------------------------------------------------
 

@@ -1408,10 +1408,7 @@ symptom is an empty project list with no error anywhere, indistinguishable from 
 having run the app.
 
 So `group.com.unplugged.daw` is declared in three places that must agree: the app's
-entitlements, the extension's, and the host stub's. The app now prefers the group container
-for its data directory and falls back to its own when the group is unavailable — an
-unsigned build, or a profile without the entitlement. The fallback is not a failure
-standalone; it only leaves the plugin with nothing to play, and the app says so on stderr.
+entitlements, the extension's, and the host stub's.
 
 Existing projects are **copied**, not moved, the first time. This runs on a machine holding
 the only copy of someone's work: a failed move is unrecoverable, a failed copy costs disk.
@@ -1421,6 +1418,68 @@ alternative risks the thing that must not be risked.
 
 Migration only ever runs into an *empty* destination. Merging two divergent project
 directories is a conflict-resolution problem, and guessing at it would lose work.
+
+### The App Group cannot be the default, so it is not
+
+Risk 4 below — "needs a real signing identity to work at all" — was right, and it is worse
+than "may not work". `com.apple.security.application-groups` is **provisioning-profile-backed**:
+Xcode refuses to *build* a target that declares one without a team and a matching profile.
+The first run of `scripts/install-plugin.sh --debug` therefore did not reach a single line
+of Swift; it failed with
+
+```
+"UnpluggedAUHost" requires a provisioning profile. Enable development signing and
+select a provisioning profile in the Signing & Capabilities editor.
+```
+
+And a free Apple ID cannot fix it: App Groups cannot be registered on a personal team at
+all. So the choice was to require a paid membership before the plugin can be built once, or
+to find another way for two processes to see one directory. Requiring the membership to
+*iterate* is the wrong trade — it gates the compiler errors, which is the whole reason for
+building this at all.
+
+**What replaces it, ad-hoc:** the extension keeps the App Sandbox — it costs nothing under
+ad-hoc signing, and developing without it would hide sandbox bugs until the worst possible
+moment — and adds
+
+```
+com.apple.security.temporary-exception.files.home-relative-path.read-only
+    /Library/Application Support/Unplugged/
+```
+
+A temporary exception is a sandbox rule, not a capability, so ad-hoc signing grants it. The
+extension gets read access to exactly the one directory it needs, and read-only is not a
+concession: the plugin only ever reads projects. The app owns them.
+
+The app's side of that has to be *outside* a container for the exception to reach it, so
+the default `Entitlements.plist` drops the sandbox too. `Entitlements-Signed.plist` and
+`tauri.signed.conf.json` keep the shipping arrangement intact.
+
+The path is now named in three files — the entitlement, `homeRelativeDataDirectory()` in
+Swift, and `HOME_RELATIVE_DIR` in `shared_container.rs` — and a **test reads the other two
+files and asserts they agree**, because drift between them fails silently in exactly the
+way this whole section exists to prevent: the app writes one path, the plugin reads another,
+and the symptom is an empty project list.
+
+One subtlety that had to be got right in Swift: inside the sandbox,
+`FileManager.urls(for: .applicationSupportDirectory ...)` and `NSHomeDirectory()` both
+answer with *the extension's own container* — precisely the directory the app cannot write
+to. `getpwuid(getuid()).pw_dir` reports the account's home regardless, which is what the
+exception is written against.
+
+`Sharing` now has three values rather than a boolean, because "the plugin can see this" and
+"this is the App Group" stopped being the same claim:
+
+| | Reached by | Needs |
+|---|---|---|
+| `AppGroup` | sandboxed app + sandboxed extension | paid team, profile |
+| `HomeDirectory` | unsandboxed app + sandbox exception | nothing |
+| `Private` | nothing | — the plugin sees no projects |
+
+`scripts/install-plugin.sh --signed` with `UNPLUGGED_TEAM_ID` set builds the `Signed`
+configuration against the group entitlements. It is untested — nobody here has a paid team —
+but it is a build configuration rather than a paragraph, so it will fail loudly when it is
+first tried rather than being quietly wrong.
 
 ### No panic crosses the boundary
 
@@ -1447,7 +1506,7 @@ the app.
 
 ### What was verified
 
-- **297 Rust tests**, clippy clean, both Apple targets compile-check including the new
+- **302 Rust tests**, clippy clean, both Apple targets compile-check including the new
   plugin crate.
 - The host follower, the C ABI's null-safety, state round-tripping, a session referencing a
   deleted project still loading, the host tempo overriding the project's, and the render
@@ -1466,9 +1525,15 @@ Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of 
 3. **The bridging header.** An app-extension target reaching a Rust staticlib through
    `SWIFT_OBJC_BRIDGING_HEADER` plus `OTHER_LDFLAGS`, which has more ways to go wrong than
    it looks.
-4. **The App Group.** Needs a real signing identity to work at all; ad-hoc signing may not
-   grant it, in which case the project list is empty and the fallback path is what runs.
-5. Whether Logic offers `aumi` extensions from an ad-hoc-signed app at all.
+4. ~~**The App Group.** Needs a real signing identity to work at all; ad-hoc signing may not
+   grant it, in which case the project list is empty and the fallback path is what runs.~~
+   **Confirmed, and worse than written** — it blocks the build outright. See "The App Group
+   cannot be the default" above for what replaced it.
+5. **Whether a sandbox temporary exception is enough.** The replacement for the group. If
+   the extension is denied the directory anyway, the project list is empty — check
+   `log stream --predicate 'sender == "Sandbox"'` while Logic scans, and look for a deny
+   naming `Application Support/Unplugged`.
+6. Whether Logic offers `aumi` extensions from an ad-hoc-signed app at all.
 
 ### What a human should test manually
 
@@ -1479,9 +1544,9 @@ Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of 
 - [ ] `auval -v aumi Unpl Lffn` for a full validation pass.
 - [ ] In Logic: a software instrument track, MIDI FX slot, Unplugged. Confirm the window
       opens and the build stamp matches `git rev-parse --short=7 HEAD`.
-- [ ] Confirm the project list is populated. If it is empty, the App Group is the first
-      thing to check — run the standalone app once first, and look for the "no App Group
-      container" line on its stderr.
+- [ ] Confirm the project list is populated. If it is empty: run the standalone app once
+      first, then check that `~/Library/Application Support/Unplugged/projects` exists and
+      has something in it. The app prints where it settled on stderr.
 - [ ] Pick a project, press play in Logic, confirm notes reach the instrument.
 - [ ] Locate mid-playback and confirm the plugin follows without a stuck note.
 - [ ] Turn on Cycle and confirm the loop wrap does not hang a note.

@@ -1,20 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The container app's entitlements.
+  The container app's entitlements, for local development.
 
-  Must declare the same App Group as the extension and as the Tauri app's
-  Entitlements.plist. All three, in the same team, or the extension sees an empty projects
-  list with nothing to explain why.
+  The stub host does nothing but exist so that macOS has an app to scan; the extension
+  inside it is the product. So it gets the sandbox and nothing else — see
+  UnpluggedAU.entitlements for why the App Group is not here, and
+  UnpluggedAUHost-Signed.entitlements for where it went.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.com.unplugged.daw</string>
-	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
 </dict>

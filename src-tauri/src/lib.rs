@@ -36,9 +36,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // Prefer the App Group container, so the AUv3 extension can read the same
-            // projects. Falls back to the app's own directory when the group is
-            // unavailable — that works fine standalone, it just leaves the plugin with
+            // Somewhere the AUv3 extension can read too. The App Group when the build is
+            // signed for one, a fixed path under the home directory otherwise — the
+            // plugin reaches that through a sandbox exception — and the app's own
+            // directory only if neither is available, which leaves the plugin with
             // nothing to play.
             let location = shared_container::resolve(app.path().app_data_dir()?);
             let data_dir = location.dir.clone();
@@ -46,15 +47,22 @@ pub fn run() {
 
             if let Some(from) = &location.migrated_from {
                 eprintln!(
-                    "projects copied into the shared container from {}; the originals \
-                     were left in place",
+                    "projects copied to {} from {}; the originals were left in place",
+                    data_dir.display(),
                     from.display()
                 );
             }
-            if !location.shared_with_plugin {
-                eprintln!(
-                    "no App Group container — the AUv3 plugin will not see these projects"
-                );
+            match location.sharing {
+                shared_container::Sharing::AppGroup => {}
+                shared_container::Sharing::HomeDirectory => eprintln!(
+                    "no App Group — sharing {} with the plugin instead; this works for an \
+                     ad-hoc build but not for a sandboxed one",
+                    data_dir.display()
+                ),
+                shared_container::Sharing::Private => eprintln!(
+                    "no shared directory available — the AUv3 plugin will not see these \
+                     projects"
+                ),
             }
 
             // A failure here must not stop the app from launching: the project picker

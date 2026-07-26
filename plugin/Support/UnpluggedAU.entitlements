@@ -1,26 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The extension's entitlements.
+  The extension's entitlements, for local development.
 
-  The App Group is the load-bearing one. An app extension gets its own sandboxed
-  container, so without a group shared with the container app the plugin cannot see the
-  projects the app wrote — and the symptom is an empty project list with no error, which
-  looks exactly like "the app has never run".
+  WHAT IS NOT HERE, AND WHY
 
-  The same group has to be on the app's entitlements, and both have to be in the same
-  team. Getting one of the two wrong is the most likely reason a correctly-built plugin
-  shows nothing.
+  `com.apple.security.application-groups` is *provisioning-profile-backed*: Xcode refuses
+  to build a target that declares one unless a real team and a matching profile are
+  selected, and App Groups are not available on a free Apple ID at all. Declaring it here
+  is what produced
+
+      "UnpluggedAU" requires a provisioning profile. Enable development signing and
+      select a provisioning profile in the Signing & Capabilities editor.
+
+  Requiring a paid membership before the plugin can be built once is a bad trade, so the
+  group lives in UnpluggedAU-Signed.entitlements and is used by the `Signed` configuration.
+
+  WHAT REPLACES IT
+
+  The sandbox stays on — it costs nothing under ad-hoc signing, and it is what the shipped
+  build will run under, so developing without it would hide sandbox bugs until the worst
+  possible moment. The temporary exception below gives the extension read access to the one
+  directory it needs: where the standalone app keeps its projects. Read-only, because the
+  plugin only ever reads them — the app owns that directory.
+
+  A temporary exception is *not* profile-backed, so ad-hoc signing grants it. The path is
+  relative to the real home directory, not this extension's container, and must stay in
+  step with `sharedDataDirectory()` in UnpluggedAudioUnit.swift and with
+  `home_data_dir()` in src-tauri/src/shared_container.rs. The trailing slash matters: it
+  is what makes the exception cover the directory's contents.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.com.unplugged.daw</string>
-	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/Library/Application Support/Unplugged/</string>
+	</array>
 </dict>
 </plist>

@@ -138,6 +138,14 @@ and macOS only scans apps in locations Launch Services indexes, which does not d
 include `~/Documents`. The install script handles that, plus killing the extension host so
 a replaced build is actually picked up.
 
+No Apple Developer account is needed. The build is ad-hoc signed, and the plugin reaches
+the app's projects through a read-only sandbox exception on
+`~/Library/Application Support/Unplugged` rather than through an App Group — App Groups
+require a paid membership and a provisioning profile, and Xcode will not build a target
+that declares one without them. With a membership, `UNPLUGGED_TEAM_ID=XXXXXXXXXX
+scripts/install-plugin.sh --signed` builds the shipping arrangement instead. See
+[DECISIONS.md](./DECISIONS.md).
+
 ## Development
 
 ```bash
@@ -159,7 +167,7 @@ unreachable inside Tauri.
 ### Checks
 
 ```bash
-cargo test --workspace          # 297 tests
+cargo test --workspace          # 302 tests
 cargo clippy --workspace --all-targets
 npm run build                   # tsc --noEmit && vite build
 
