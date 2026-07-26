@@ -1,4 +1,10 @@
 import AVFoundation
+// AudioToolbox and CoreAudio are imported explicitly rather than relied on to arrive
+// through AVFoundation: `AudioUnitAddRenderNotify`, `AUEventSampleTimeImmediate` and the
+// `kAUSampler_*` constants live in them, and transitive module re-export is not
+// guaranteed across toolchain versions.
+import AudioToolbox
+import CoreAudio
 import CUnpluggedFFI
 import Foundation
 
@@ -145,7 +151,7 @@ public final class AudioGraph {
     public func stop() {
         graphQueue.sync {
             guard isRunning else { return }
-            allNotesOff()
+            allNotesOffLocked()
             engine.stop()
             isRunning = false
             #if os(iOS)
@@ -253,6 +259,14 @@ public final class AudioGraph {
     }
 
     public func allNotesOff() {
+        graphQueue.sync { allNotesOffLocked() }
+    }
+
+    /// Caller must already be on `graphQueue`.
+    ///
+    /// Split from the public entry point because `stop()` calls this from inside its own
+    /// `graphQueue.sync` — re-entering `sync` on a serial queue deadlocks.
+    private func allNotesOffLocked() {
         for chain in tracks {
             for channel in UInt8(0)...UInt8(15) {
                 // CC 123 = All Notes Off. Sent on every channel because a track's notes
