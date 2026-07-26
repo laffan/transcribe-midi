@@ -1,0 +1,10 @@
+# Workspace-wide build environment.
+
+[env]
+# Match tauri.conf.json's minimumSystemVersion (macOS 12.0 / iOS 15.0) so every object
+# in the final link — Rust code, C compiled by build scripts, and the Swift package —
+# agrees on one deployment target. Rust's default for aarch64-apple-darwin is 11.0,
+# which produced "object file was built for newer 'macOS' version than being linked"
+# warnings against the Swift objects (which honour Package.swift's .macOS(.v12)).
+MACOSX_DEPLOYMENT_TARGET = "12.0"
+IPHONEOS_DEPLOYMENT_TARGET = "15.0"

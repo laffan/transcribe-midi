@@ -154,11 +154,33 @@ fn main() {
     // (LC_LINKER_OPTION) naming libswiftCore and friends; these `-L`s let the final
     // link resolve them. At load time the system runtime comes from the dyld shared
     // cache via absolute install names, so no rpath is needed.
-    let swift_runtime = if target_os == "ios" { "iphoneos" } else { "macosx" };
-    if let Some(sdk_path) = xcrun_sdk_path(swift_runtime) {
+    let swift_platform = if target_os == "ios" { "iphoneos" } else { "macosx" };
+    if let Some(sdk_path) = xcrun_sdk_path(swift_platform) {
         println!("cargo:rustc-link-search=native={sdk_path}/usr/lib/swift");
     }
     println!("cargo:rustc-link-search=native=/usr/lib/swift");
+
+    // Back-deployment archives — libswiftCompatibility56.a, libswiftCompatibilityPacks.a
+    // and friends — live in the *toolchain*, not the SDK, and Swift objects whose
+    // deployment target predates their language runtime's OS debut (macOS 12.0 < 12.3
+    // for Swift 5.6) force-load them. Without this path the link dies on
+    // `__swift_FORCE_LOAD_$_swiftCompatibility56`.
+    if let Some(dir) = swift_toolchain_lib_dir(swift_platform) {
+        println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+}
+
+/// `…/XcodeDefault.xctoolchain/usr/lib/swift/<platform>`, derived from `swiftc`'s
+/// location so it tracks whichever toolchain is selected.
+fn swift_toolchain_lib_dir(platform: &str) -> Option<PathBuf> {
+    let output = Command::new("xcrun").args(["--find", "swiftc"]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let swiftc = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    // <toolchain>/usr/bin/swiftc -> <toolchain>/usr/lib/swift/<platform>
+    let dir = swiftc.parent()?.parent()?.join("lib/swift").join(platform);
+    dir.is_dir().then_some(dir)
 }
 
 fn host_has_swift() -> bool {
