@@ -36,6 +36,8 @@ struct UnpluggedAUHostApp: App {
             .padding(20)
             .frame(width: 420, height: 200)
         }
-        .windowResizability(.contentSize)
+        // No `.windowResizability(.contentSize)`: it is macOS 13+, the deployment target
+        // is 12.0, and a fixed-size nicety on a stub window is not worth an availability
+        // check. A resizable window that says the right words is fine.
     }
 }
