@@ -33,11 +33,12 @@ const OCTAVE_UP = "x";
 const VISIBLE_SEMITONES = 24;
 
 interface OnScreenKeyboardProps {
+  /** Display only. Rust applies the velocity — this just shows what it will be. */
   velocity: number;
   channel: number;
-  onNoteOn: (pitch: number, velocity: number) => void;
+  onNoteOn: (pitch: number) => void;
   onNoteOff: (pitch: number) => void;
-  /** Pitches held by an external MIDI controller, shown alongside local presses. */
+  /** Pitches held by live input, shown alongside local presses. */
   externalNotes?: Set<number>;
 }
 
@@ -65,9 +66,9 @@ export function OnScreenKeyboard({
         next.add(pitch);
         return next;
       });
-      onNoteOn(pitch, velocity);
+      onNoteOn(pitch);
     },
-    [onNoteOn, velocity],
+    [onNoteOn],
   );
 
   const release = useCallback(

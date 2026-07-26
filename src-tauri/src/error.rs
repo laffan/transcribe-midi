@@ -31,6 +31,32 @@ impl From<CoreError> for CommandError {
             CoreError::Io { .. } => "io",
             CoreError::Json { .. } => "corrupt_project",
             CoreError::MidiParse { .. } | CoreError::MidiWrite(_) => "midi",
+            CoreError::Invalid(_) => "invalid_request",
+        };
+
+        CommandError {
+            code,
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<unplugged_ai::AiError> for CommandError {
+    fn from(err: unplugged_ai::AiError) -> Self {
+        use unplugged_ai::AiError;
+
+        // `no_api_key` is the one the frontend branches on: it is not a failure so much
+        // as a setup step, and the AI panel offers to open Settings rather than showing
+        // an error.
+        let code = match err {
+            AiError::NoApiKey => "no_api_key",
+            AiError::Keychain(_) => "keychain",
+            AiError::Transport(_) => "network",
+            AiError::Api { .. } => "api",
+            AiError::Protocol(_) => "protocol",
+            AiError::ToolLimit(_) => "tool_limit",
+            AiError::EmptyPrompt => "empty_prompt",
+            AiError::Core(core) => return CommandError::from(core),
         };
 
         CommandError {

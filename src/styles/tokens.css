@@ -34,6 +34,12 @@
   --success: #6cb08a;
   --warning: #d9a441;
 
+  /* Phase 6 diff preview. Green is new, red is going, amber is moving — the same
+     three meanings in the piano roll and in the AI panel's counts. */
+  --diff-added: #6cb08a;
+  --diff-removed: #d16b6b;
+  --diff-changed: #d9a441;
+
   /* Piano roll / keyboard specifics, used from Phase 2 onward. */
   --key-white: #e8eaf0;
   --key-white-active: var(--accent);
@@ -72,6 +78,10 @@
 
   --success: #3f8a63;
   --warning: #b5842c;
+
+  --diff-added: #3f8a63;
+  --diff-removed: #c0433b;
+  --diff-changed: #b5842c;
 
   --key-white: #ffffff;
   --key-white-active: var(--accent);

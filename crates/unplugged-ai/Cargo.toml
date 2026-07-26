@@ -1,0 +1,21 @@
+[package]
+name = "unplugged-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Anthropic client and tool loop. Every request originates here; the key never leaves this crate."
+
+[dependencies]
+unplugged-core = { path = "../unplugged-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+# Apple only, for the same reason as `midir` in unplugged-midi: this is the only place
+# the feature runs. `native-tls` on macOS and iOS is Security.framework through pure-Rust
+# bindings — no C to build, so the Apple cross-compile check still works from a Linux
+# host, and certificate verification follows the system trust store. rustls would drag in
+# a crypto backend that needs a C compiler targeting Apple, which would cost us that
+# check for no benefit here. See `anthropic.rs`.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+ureq = { version = "3", default-features = false, features = ["native-tls", "json", "gzip"] }

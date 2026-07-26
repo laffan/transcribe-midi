@@ -80,6 +80,15 @@ pub struct AppState {
     pub midi: MidiInputHost,
     pub open: Mutex<Option<OpenProject>>,
     pub input: Arc<Mutex<InputState>>,
+    /// Where `ai.json` lives. The projects themselves are the store's business.
+    pub data_dir: PathBuf,
+    pub ai_prefs: Mutex<crate::ai::AiPreferences>,
+    /// The AI proposal awaiting accept or reject.
+    ///
+    /// Held here rather than sent to the frontend on purpose: it contains a
+    /// `Transaction`, and letting the webview hand one back would undo the whole point
+    /// of `EditRequest` being a closed set of intents.
+    pub pending_ai: Mutex<Option<crate::ai::PendingProposal>>,
 }
 
 impl AppState {
@@ -90,6 +99,9 @@ impl AppState {
             midi: MidiInputHost::new(),
             open: Mutex::new(None),
             input: Arc::new(Mutex::new(InputState::new())),
+            ai_prefs: Mutex::new(crate::ai::AiPreferences::load(&app_data_dir)),
+            pending_ai: Mutex::new(None),
+            data_dir: app_data_dir,
         }
     }
 }

@@ -87,3 +87,30 @@
     padding: 0 0 var(--space-2) 0;
   }
 }
+
+/* Key entry and the model picker sit as a field plus its action. */
+.settings__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.settings__row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings__row .btn {
+  flex: 0 0 auto;
+}
+
+.settings__error {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}

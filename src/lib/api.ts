@@ -11,6 +11,9 @@ import { listen } from "@tauri-apps/api/event";
 
 import { mockBackend, mockTransport } from "./mockBackend";
 import type {
+  AiModelsResponse,
+  AiProposal,
+  AiStatus,
   CommandError,
   EditorState,
   EditRequest,
@@ -107,11 +110,15 @@ export const api = {
     call<TransportState>("set_loop_region", { region }),
 
   // --- Live input (phase 2) ------------------------------------------------
+  //
+  // No track argument: live input always goes to the track Rust has armed, which is the
+  // same track the recorder writes to. Passing `velocity: null` uses the keyboard
+  // velocity from Settings rather than a number picked here.
 
-  liveNoteOn: (track: number, pitch: number, velocity: number, channel: number) =>
-    call<void>("live_note_on", { track, pitch, velocity, channel }),
-  liveNoteOff: (track: number, pitch: number, channel: number) =>
-    call<void>("live_note_off", { track, pitch, channel }),
+  liveNoteOn: (pitch: number, channel: number, velocity: number | null = null) =>
+    call<void>("live_note_on", { pitch, velocity, channel }),
+  liveNoteOff: (pitch: number, channel: number) =>
+    call<void>("live_note_off", { pitch, channel }),
   panic: () => call<void>("panic_all_notes_off"),
 
   // --- Input and recording (phase 4) ---------------------------------------
@@ -138,6 +145,22 @@ export const api = {
     call<string>("stage_export", { filename, bytes }),
   previewImport: (path: string) => call<ImportPreview>("preview_import", { path }),
   importSmf: (path: string) => call<ImportResult>("import_smf", { path }),
+
+  // --- AI (phase 6) --------------------------------------------------------
+  //
+  // Note what is missing: there is no way to *read* the API key. `aiSetKey` sends one
+  // to Rust and nothing sends one back — the only thing this layer can learn is whether
+  // a key exists and its last four characters.
+
+  aiStatus: () => call<AiStatus>("ai_status"),
+  aiSetKey: (key: string) => call<AiModelsResponse>("ai_set_key", { key }),
+  aiClearKey: () => call<AiStatus>("ai_clear_key"),
+  aiModels: () => call<AiModelsResponse>("ai_models"),
+  aiSetModel: (model: string) => call<AiStatus>("ai_set_model", { model }),
+  aiPropose: (track: number, prompt: string, selection: number[]) =>
+    call<AiProposal>("ai_propose", { track, prompt, selection }),
+  aiAccept: () => call<EditorState>("ai_accept"),
+  aiReject: () => call<void>("ai_reject"),
 
   copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
   shareFile: (path: string) => call<void>("share_file", { path }),

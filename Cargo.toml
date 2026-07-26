@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/unplugged-core", "crates/unplugged-audio", "crates/unplugged-midi", "src-tauri"]
+members = [
+    "crates/unplugged-core",
+    "crates/unplugged-audio",
+    "crates/unplugged-midi",
+    "crates/unplugged-ai",
+    "src-tauri",
+]
 resolver = "2"
 
 [workspace.package]

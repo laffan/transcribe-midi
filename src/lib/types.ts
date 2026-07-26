@@ -190,6 +190,65 @@ export interface PlatformCapabilities {
   save_dialog: boolean;
 }
 
+// --- AI (phase 6) ----------------------------------------------------------
+
+export interface AiStatus {
+  has_key: boolean;
+  /** Last four characters. The key itself never crosses this boundary. */
+  key_hint: string | null;
+  /** False on a build without a Keychain, where the key lasts until the app quits. */
+  key_persists: boolean;
+  model: string | null;
+}
+
+export interface ModelInfo {
+  id: string;
+  display_name: string;
+}
+
+export interface AiModelsResponse {
+  models: ModelInfo[];
+  default: string | null;
+}
+
+export interface NoteChange {
+  before: Note;
+  after: Note;
+}
+
+export interface NoteDiff {
+  added: Note[];
+  removed: Note[];
+  changed: NoteChange[];
+}
+
+export interface ToolStep {
+  tool: string;
+  input: unknown;
+  result: string;
+  ok: boolean;
+}
+
+export interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+}
+
+/**
+ * A proposed edit. Deliberately does not contain the transaction — that stays in Rust,
+ * so the webview can look at a change but cannot construct one.
+ */
+export interface AiProposal {
+  diff: NoteDiff;
+  preview_notes: Note[];
+  narration: string;
+  steps: ToolStep[];
+  usage: Usage;
+  truncated: boolean;
+  summary: string;
+  empty: boolean;
+}
+
 export const MIN_TEMPO = 20;
 export const MAX_TEMPO = 300;
 export const DEFAULT_TEMPO = 120;

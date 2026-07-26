@@ -257,45 +257,6 @@ pub fn set_loop_region(
     Ok(transport_snapshot(&state))
 }
 
-// ---------------------------------------------------------------------------
-// Live input
-// ---------------------------------------------------------------------------
-
-/// Play a note immediately, bypassing the sequencer.
-///
-/// Used by the on-screen keyboard, and from Phase 4 by external MIDI input. These notes
-/// are not on the timeline, so they are not scheduled — they sound now.
-#[tauri::command]
-pub fn live_note_on(
-    state: State<'_, AppState>,
-    track: u16,
-    pitch: u8,
-    velocity: u8,
-    channel: u8,
-) -> CommandResult<()> {
-    state
-        .audio
-        .note_on(track, pitch.min(127), velocity.clamp(1, 127), channel.min(15))
-        .map_err(|e| CommandError::from(e.to_string()))
-}
-
-#[tauri::command]
-pub fn live_note_off(
-    state: State<'_, AppState>,
-    track: u16,
-    pitch: u8,
-    channel: u8,
-) -> CommandResult<()> {
-    state
-        .audio
-        .note_off(track, pitch.min(127), channel.min(15))
-        .map_err(|e| CommandError::from(e.to_string()))
-}
-
-#[tauri::command]
-pub fn panic_all_notes_off(state: State<'_, AppState>) -> CommandResult<()> {
-    state
-        .audio
-        .all_notes_off()
-        .map_err(|e| CommandError::from(e.to_string()))
-}
+// Live input lives in `input.rs`. It used to be here, sounding notes directly, which is
+// how the on-screen keyboard ended up audible but never recorded — there were two
+// note-on paths and only one of them reached the recorder. There is now one.

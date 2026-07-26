@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Modal } from "../../components/Modal";
 import { api, errorMessage, isTauri } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { InputSettings } from "../../lib/types";
+import type { AiStatus, InputSettings, ModelInfo } from "../../lib/types";
 import type { Theme } from "../../lib/theme";
 import { setTheme } from "../../lib/theme";
 import "./SettingsModal.css";
@@ -235,15 +235,151 @@ function InputTab() {
 }
 
 function AiTab() {
+  const [status, setStatus] = useState<AiStatus | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [draftKey, setDraftKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const next = await api.aiStatus();
+      setStatus(next);
+      return next;
+    } catch (e) {
+      setError(errorMessage(e));
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const next = await refresh();
+      // Only reach for the network when there is a key to authenticate with; otherwise
+      // opening this tab would produce a pointless failure every time.
+      if (!next?.has_key) return;
+      try {
+        const listed = await api.aiModels();
+        setModels(listed.models);
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    })();
+  }, [refresh]);
+
+  async function saveKey() {
+    if (!draftKey.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Rust verifies the key against the API before storing it, and returns the model
+      // list from the same call — so a typo is caught here rather than mid-edit.
+      const listed = await api.aiSetKey(draftKey);
+      setModels(listed.models);
+      setDraftKey("");
+      await refresh();
+      logger.info(`API key saved — ${listed.models.length} models available`);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeKey() {
+    setBusy(true);
+    try {
+      setStatus(await api.aiClearKey());
+      setModels([]);
+      logger.info("API key removed from the Keychain");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="settings__group">
-      <Pending phase="Phase 6" items={["Anthropic API key", "Model picker"]} />
-      <p className="field__hint">
-        The API key will be stored in the platform Keychain — never in{" "}
-        <span className="mono">project.json</span>, never in localStorage, and never handed to the
-        webview. Every request originates in Rust. The model list is fetched from{" "}
-        <span className="mono">GET /v1/models</span> at runtime rather than hardcoded.
-      </p>
+      <label className="field">
+        <span className="field__label">Anthropic API key</span>
+        {status?.has_key ? (
+          <div className="settings__row">
+            <span className="mono">{status.key_hint ?? "stored"}</span>
+            <button className="btn btn--danger" disabled={busy} onClick={() => void removeKey()}>
+              Remove
+            </button>
+          </div>
+        ) : (
+          <div className="settings__row">
+            <input
+              className="input"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="sk-ant-…"
+              value={draftKey}
+              disabled={busy}
+              onChange={(e) => setDraftKey(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveKey();
+                }
+              }}
+            />
+            <button
+              className="btn btn--primary"
+              disabled={busy || draftKey.trim().length === 0}
+              onClick={() => void saveKey()}
+            >
+              {busy ? "Checking…" : "Save"}
+            </button>
+          </div>
+        )}
+        <span className="field__hint">
+          Stored in the platform Keychain — never in <span className="mono">project.json</span>,
+          never in localStorage, and never handed to the interface. Every request to Anthropic is
+          made by Rust. Once saved, the key cannot be read back here; only its last four
+          characters are shown.
+        </span>
+        {status && !status.key_persists && (
+          <span className="field__hint">
+            This build has no Keychain, so the key is held in memory and is forgotten when the app
+            quits. Use the macOS or iOS build for anything real.
+          </span>
+        )}
+      </label>
+
+      {error && <p className="settings__error">{error}</p>}
+
+      <label className="field">
+        <span className="field__label">Model</span>
+        <select
+          className="input"
+          value={status?.model ?? ""}
+          disabled={!status?.has_key || models.length === 0}
+          onChange={(e) => {
+            const id = e.target.value;
+            api
+              .aiSetModel(id)
+              .then(setStatus)
+              .catch((err) => setError(errorMessage(err)));
+          }}
+        >
+          {models.length === 0 && <option value="">{status?.model ?? "No models loaded"}</option>}
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.display_name || model.id}
+            </option>
+          ))}
+        </select>
+        <span className="field__hint">
+          Fetched from <span className="mono">GET /v1/models</span> when the key is saved, rather
+          than hardcoded — a baked-in list is wrong the week a model ships. The default is the
+          newest Sonnet-class model the key can reach.
+        </span>
+      </label>
     </div>
   );
 }
@@ -263,7 +399,7 @@ function AboutTab() {
     <div className="settings__group">
       <div className="field">
         <span className="field__label">Version</span>
-        <div className="mono">0.1.0 — Phase 1</div>
+        <div className="mono">0.1.0 — Phase 7</div>
       </div>
 
       <div className="field">

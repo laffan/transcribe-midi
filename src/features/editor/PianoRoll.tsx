@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { EditRequest, Note, TimeSignature, Track } from "../../lib/types";
+import type { EditRequest, Note, NoteDiff, TimeSignature, Track } from "../../lib/types";
 import {
   GRID_OPTIONS,
   gridTicks,
@@ -43,6 +43,12 @@ interface PianoRollProps {
   playheadTicks: number;
   onScrub: (tick: number) => void;
   loopRegion: [number, number] | null;
+  /**
+   * An AI proposal being previewed. While this is set the roll is read-only and draws
+   * the change on top of the current notes rather than instead of them — the point of a
+   * preview is seeing what would move, not seeing the result in isolation.
+   */
+  preview?: NoteDiff | null;
 }
 
 type Gesture =
@@ -65,6 +71,7 @@ export function PianoRoll({
   playheadTicks,
   onScrub,
   loopRegion,
+  preview,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -189,23 +196,64 @@ export function PianoRoll({
       if (rect.y + rect.height < RULER_HEIGHT || rect.y > rollHeight) return;
 
       const selected = selectionSet.has(index);
-      // Velocity drives opacity so dynamics are legible at a glance.
-      const alpha = 0.4 + (note.velocity / 127) * 0.6;
+      // Velocity drives opacity so dynamics are legible at a glance. Under a preview
+      // everything recedes so the proposed change is what the eye lands on.
+      const alpha = (0.4 + (note.velocity / 127) * 0.6) * (preview ? 0.3 : 1);
 
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = selected ? accent : track.color;
+      ctx.fillStyle = selected && !preview ? accent : track.color;
       const x = Math.max(KEY_WIDTH, rect.x);
       const width = rect.width - (x - rect.x);
       ctx.fillRect(x, rect.y + 1, Math.max(1, width), rect.height - 2);
 
       ctx.globalAlpha = 1;
-      if (selected) {
+      if (selected && !preview) {
         ctx.strokeStyle = keyWhite;
         ctx.lineWidth = 1;
         ctx.strokeRect(x + 0.5, rect.y + 1.5, Math.max(1, width) - 1, rect.height - 3);
       }
     });
     ctx.globalAlpha = 1;
+
+    // ---- proposed change ----
+    //
+    // Three colours, one meaning each: green is new, red is going, amber is moving.
+    // Removed and "before" notes are outlined rather than filled, so a filled block
+    // always means a note that will exist once the change is accepted.
+    if (preview) {
+      const added = token("--diff-added", "#6cb08a");
+      const removed = token("--diff-removed", "#d16b6b");
+      const changed = token("--diff-changed", "#d9a441");
+
+      const block = (note: Note, color: string, filled: boolean) => {
+        const rect = noteRect(note, 0, view);
+        if (rect.x + rect.width < KEY_WIDTH || rect.x > size.width) return;
+        if (rect.y + rect.height < RULER_HEIGHT || rect.y > rollHeight) return;
+
+        const x = Math.max(KEY_WIDTH, rect.x);
+        const width = Math.max(1, rect.width - (x - rect.x));
+
+        if (filled) {
+          ctx.globalAlpha = 0.85;
+          ctx.fillStyle = color;
+          ctx.fillRect(x, rect.y + 1, width, rect.height - 2);
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.globalAlpha = 0.9;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 2]);
+          ctx.strokeRect(x + 0.5, rect.y + 1.5, width - 1, rect.height - 3);
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+        }
+      };
+
+      preview.removed.forEach((note) => block(note, removed, false));
+      preview.changed.forEach(({ before }) => block(before, changed, false));
+      preview.changed.forEach(({ after }) => block(after, changed, true));
+      preview.added.forEach((note) => block(note, added, true));
+    }
 
     // ---- velocity lane ----
     const laneTop = rollHeight;
@@ -324,6 +372,7 @@ export function PianoRoll({
   }, [
     size, rollHeight, view, track, selectionSet, ppq, timeSignature,
     scrollTicks, pxPerTick, rowHeight, topPitch, snap, gesture, playheadTicks, loopRegion,
+    preview,
   ]);
 
   useEffect(() => {
@@ -341,6 +390,10 @@ export function PianoRoll({
   const dragOrigin = useRef({ x: 0, y: 0 });
 
   function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    // A proposal is on screen. Editing underneath it would invalidate it — Rust checks
+    // and refuses on accept — so the roll is read-only until the user decides.
+    if (preview) return;
+
     const { x, y } = localPoint(event);
     dragOrigin.current = { x, y };
     canvasRef.current?.setPointerCapture(event.pointerId);
@@ -559,6 +612,7 @@ export function PianoRoll({
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
+      if (preview) return;
 
       const mod = event.metaKey || event.ctrlKey;
 
@@ -619,7 +673,7 @@ export function PianoRoll({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selection, clipboard, track, trackIndex, onEdit, onSelectionChange, snap, ppq, timeSignature, playheadTicks]);
+  }, [selection, clipboard, track, trackIndex, onEdit, onSelectionChange, snap, ppq, timeSignature, playheadTicks, preview]);
 
   // -- render --------------------------------------------------------------
 

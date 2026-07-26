@@ -14,6 +14,9 @@ export function App() {
   const [openProjectId, setOpenProjectId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
+  // Bumped when Settings closes. Rust owns the input settings; this is how the editor
+  // knows to re-read them rather than every panel polling.
+  const [settingsRevision, setSettingsRevision] = useState(0);
 
   useEffect(() => {
     applyTheme(theme);
@@ -33,6 +36,7 @@ export function App() {
       ) : (
         <Editor
           projectId={openProjectId}
+          settingsRevision={settingsRevision}
           onClose={() => setOpenProjectId(null)}
           onOpenSettings={() => setShowSettings(true)}
         />
@@ -42,7 +46,10 @@ export function App() {
         <SettingsModal
           theme={theme}
           onThemeChange={setThemeState}
-          onClose={() => setShowSettings(false)}
+          onClose={() => {
+            setShowSettings(false);
+            setSettingsRevision((n) => n + 1);
+          }}
         />
       )}
     </>

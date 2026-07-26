@@ -1,3 +1,4 @@
+mod ai;
 mod commands;
 mod editor;
 mod error;
@@ -126,11 +127,10 @@ pub fn run() {
             editor::transport_get,
             editor::set_tempo,
             editor::set_loop_region,
-            // Live input
-            editor::live_note_on,
-            editor::live_note_off,
-            editor::panic_all_notes_off,
-            // Input and recording (phase 4)
+            // Live input and recording (phase 4)
+            input::live_note_on,
+            input::live_note_off,
+            input::panic_all_notes_off,
             input::input_settings,
             input::midi_ports,
             input::midi_connect,
@@ -154,6 +154,15 @@ pub fn run() {
             platform::share_file,
             platform::begin_file_drag,
             platform::platform_capabilities,
+            // AI (phase 6)
+            ai::ai_status,
+            ai::ai_set_key,
+            ai::ai_clear_key,
+            ai::ai_models,
+            ai::ai_set_model,
+            ai::ai_propose,
+            ai::ai_accept,
+            ai::ai_reject,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Unplugged");

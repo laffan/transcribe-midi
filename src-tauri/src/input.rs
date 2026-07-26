@@ -294,9 +294,34 @@ pub fn record_cancel(state: State<'_, AppState>) -> CommandResult<()> {
 // The live path
 // ---------------------------------------------------------------------------
 
-/// Handle one event from the MIDI callback thread.
-fn handle_live_event(app: &tauri::AppHandle, state: &AppState, event: MidiEvent) {
+/// Sound a live note on the armed track and, if recording, capture it.
+///
+/// This is the *only* note-on path for live input. The on-screen keyboard and an
+/// external controller both land here, which is what makes them behave identically —
+/// an earlier version had the keyboard call the sampler directly and it silently never
+/// recorded. There is no second way to play a live note.
+fn live_on(app: &tauri::AppHandle, state: &AppState, pitch: u8, velocity: u8, channel: u8) {
     // Stamp against our own clock, never midir's — see the module docs.
+    let tick = state.audio.position_ticks();
+    let in_count_in = state.audio.in_count_in();
+
+    let Ok(mut input) = state.input.lock() else {
+        return;
+    };
+    let track = input.armed_track;
+
+    let _ = state.audio.note_on(track, pitch, velocity, channel);
+    input.sounding.push((track, pitch, channel));
+    if input.recording && !in_count_in {
+        input.recorder.note_on(tick, pitch, velocity, channel);
+    }
+    drop(input);
+
+    let _ = app.emit("live-note", LiveNoteEvent { pitch, velocity, on: true });
+}
+
+/// Release a live note. The counterpart to [`live_on`], and equally the only path.
+fn live_off(app: &tauri::AppHandle, state: &AppState, pitch: u8, channel: u8) {
     let tick = state.audio.position_ticks();
 
     let Ok(mut input) = state.input.lock() else {
@@ -304,30 +329,84 @@ fn handle_live_event(app: &tauri::AppHandle, state: &AppState, event: MidiEvent)
     };
     let track = input.armed_track;
 
+    let _ = state.audio.note_off(track, pitch, channel);
+    input
+        .sounding
+        .retain(|(t, p, c)| !(*t == track && *p == pitch && *c == channel));
+    // Deliberately not gated on the count-in: a note held from before the record point
+    // is opened by `note_on` only once the count-in ends, and the recorder ignores an
+    // off with no matching on. Dropping offs here would hang the take instead.
+    if input.recording {
+        input.recorder.note_off(tick, pitch, channel);
+    }
+    drop(input);
+
+    let _ = app.emit("live-note", LiveNoteEvent { pitch, velocity: 0, on: false });
+}
+
+/// Handle one event from the MIDI callback thread.
+fn handle_live_event(app: &tauri::AppHandle, state: &AppState, event: MidiEvent) {
     match event {
         MidiEvent::NoteOn { pitch, velocity, channel } => {
-            let _ = state.audio.note_on(track, pitch, velocity, channel);
-            input.sounding.push((track, pitch, channel));
-            if input.recording && !state.audio.in_count_in() {
-                input.recorder.note_on(tick, pitch, velocity, channel);
-            }
-            let _ = app.emit("live-note", LiveNoteEvent { pitch, velocity, on: true });
+            live_on(app, state, pitch, velocity, channel)
         }
-        MidiEvent::NoteOff { pitch, channel } => {
-            let _ = state.audio.note_off(track, pitch, channel);
-            input
-                .sounding
-                .retain(|(t, p, c)| !(*t == track && *p == pitch && *c == channel));
-            if input.recording {
-                input.recorder.note_off(tick, pitch, channel);
-            }
-            let _ = app.emit("live-note", LiveNoteEvent { pitch, velocity: 0, on: false });
-        }
+        MidiEvent::NoteOff { pitch, channel } => live_off(app, state, pitch, channel),
         // Controllers and pitch bend are monitored but not recorded: the model stores
         // notes only. Capturing them is a later phase's problem, and dropping them
         // silently here is better than half-recording a performance.
         MidiEvent::ControlChange { .. } | MidiEvent::PitchBend { .. } => {}
     }
+}
+
+/// Play a note immediately, bypassing the sequencer.
+///
+/// Used by the on-screen keyboard and by the piano roll's note audition. There is no
+/// `track` parameter: live input always goes to the armed track, exactly as external
+/// MIDI does. `velocity` of `None` uses the keyboard velocity from Settings.
+#[tauri::command]
+pub fn live_note_on(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    pitch: u8,
+    velocity: Option<u8>,
+    channel: u8,
+) -> CommandResult<()> {
+    let velocity = match velocity {
+        Some(v) => v.clamp(1, 127),
+        None => state
+            .input
+            .lock()
+            .map(|i| i.keyboard_velocity)
+            .unwrap_or(100)
+            .clamp(1, 127),
+    };
+    live_on(&app, &state, pitch.min(127), velocity, channel.min(15));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn live_note_off(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    pitch: u8,
+    channel: u8,
+) -> CommandResult<()> {
+    live_off(&app, &state, pitch.min(127), channel.min(15));
+    Ok(())
+}
+
+/// Silence everything, everywhere. The escape hatch for a hung note.
+#[tauri::command]
+pub fn panic_all_notes_off(state: State<'_, AppState>) -> CommandResult<()> {
+    if let Ok(mut input) = state.input.lock() {
+        // Nothing is sounding after this, so the bookkeeping must agree — otherwise the
+        // next armed-track change would emit note-offs for notes that are already gone.
+        input.sounding.clear();
+    }
+    state
+        .audio
+        .all_notes_off()
+        .map_err(|e| CommandError::from(e.to_string()))
 }
 
 /// Called from the playhead thread when the transport wraps, so a note held across the

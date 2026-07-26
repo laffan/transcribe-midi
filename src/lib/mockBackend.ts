@@ -12,6 +12,9 @@
 
 import { MockEditor, MockTransport } from "./mockEditor";
 import type {
+  AiModelsResponse,
+  AiProposal,
+  AiStatus,
   CommandError,
   EditorState,
   EditRequest,
@@ -281,8 +284,8 @@ export const mockBackend = {
   // Silent by design: the spec rules out Web Audio for playback, so the preview
   // shows keys lighting up without pretending to be an instrument.
 
-  live_note_on(_args: { track: number; pitch: number; velocity: number; channel: number }): void {},
-  live_note_off(_args: { track: number; pitch: number; channel: number }): void {},
+  live_note_on(_args: { pitch: number; velocity: number | null; channel: number }): void {},
+  live_note_off(_args: { pitch: number; channel: number }): void {},
   panic_all_notes_off(): void {},
 
   // --- Input and recording -------------------------------------------------
@@ -368,6 +371,41 @@ export const mockBackend = {
     pasteboard: false,
     save_dialog: false,
   }),
+
+  // --- AI ------------------------------------------------------------------
+  //
+  // Not stubbed with fake suggestions. Every AI request originates in Rust and needs a
+  // Keychain and a real API key, neither of which a browser tab has; a mock that
+  // invented a diff would only teach the UI to trust something that cannot happen.
+
+  ai_status: (): AiStatus => ({
+    has_key: false,
+    key_hint: null,
+    key_persists: false,
+    model: null,
+  }),
+  ai_set_key(): AiModelsResponse {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_clear_key: (): AiStatus => ({
+    has_key: false,
+    key_hint: null,
+    key_persists: false,
+    model: null,
+  }),
+  ai_models(): AiModelsResponse {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_set_model(): AiStatus {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_propose(): AiProposal {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_accept(): EditorState {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_reject(): void {},
 };
 
 const inputSettings: InputSettings = {

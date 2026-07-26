@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, errorMessage, onLiveNote, onPlayhead } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { EditorState, EditRequest, PlatformCapabilities, ProjectManifest } from "../../lib/types";
+import type {
+  AiProposal,
+  EditorState,
+  EditRequest,
+  PlatformCapabilities,
+  ProjectManifest,
+} from "../../lib/types";
+import { AiPanel } from "./AiPanel";
 import { InterchangeBar } from "./InterchangeBar";
 import { ConsolePanel } from "./ConsolePanel";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
@@ -12,14 +19,13 @@ import "./Editor.css";
 
 interface EditorProps {
   projectId: string;
+  /** Changes when Settings closes, so input settings are re-read. */
+  settingsRevision: number;
   onClose: () => void;
   onOpenSettings: () => void;
 }
 
-/** Velocity used by the on-screen keyboard. Becomes a setting in Phase 4. */
-const KEYBOARD_VELOCITY = 100;
-
-export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
+export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }: EditorProps) {
   const [manifest, setManifest] = useState<ProjectManifest | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [selectedTrack, setSelectedTrack] = useState(0);
@@ -34,8 +40,12 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
   const [loopRegion, setLoopRegion] = useState<[number, number] | null>(null);
   const [metronome, setMetronome] = useState(false);
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
-  /** Pitches currently held by an external controller, for keyboard feedback. */
+  /** Pitches currently sounding from live input, for keyboard feedback. */
   const [liveNotes, setLiveNotes] = useState<Set<number>>(new Set());
+  /** Mirror of the Rust-side setting, for display only — Rust applies it. */
+  const [keyboardVelocity, setKeyboardVelocity] = useState(100);
+  /** An AI proposal being previewed on the roll. Null when there is nothing pending. */
+  const [aiPreview, setAiPreview] = useState<AiProposal | null>(null);
 
   // -- load ----------------------------------------------------------------
 
@@ -90,8 +100,9 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
     };
   }, []);
 
-  // External controller feedback. Purely cosmetic — the note has already sounded and
-  // been recorded in Rust by the time this arrives.
+  // Live-input feedback. Purely cosmetic — the note has already sounded and, if the
+  // transport is recording, been captured in Rust by the time this arrives. It fires
+  // for the on-screen keyboard too, because both go through the same Rust path.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
@@ -119,6 +130,16 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
   useEffect(() => {
     api.platformCapabilities().then(setCapabilities).catch(() => setCapabilities(null));
   }, []);
+
+  useEffect(() => {
+    api
+      .inputSettings()
+      .then((settings) => {
+        setKeyboardVelocity(settings.keyboard_velocity);
+        setMetronome(settings.metronome);
+      })
+      .catch(() => {});
+  }, [settingsRevision]);
 
   // -- editing -------------------------------------------------------------
 
@@ -295,25 +316,28 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
 
   const track = editor?.tracks[selectedTrack] ?? null;
 
+  // No track argument: Rust routes live input to the armed track, and the effect above
+  // keeps that in step with the selected one. Velocity is left to Rust so the Settings
+  // value is the single source of truth.
   const noteOn = useCallback(
-    (pitch: number, velocity: number) => {
+    (pitch: number) => {
       void api
-        .liveNoteOn(selectedTrack, pitch, velocity, track?.channel ?? 0)
+        .liveNoteOn(pitch, track?.channel ?? 0)
         .catch((error) => logger.error("Note failed", errorMessage(error)));
     },
-    [selectedTrack, track?.channel],
+    [track?.channel],
   );
 
   const noteOff = useCallback(
     (pitch: number) => {
-      void api.liveNoteOff(selectedTrack, pitch, track?.channel ?? 0).catch(() => {});
+      void api.liveNoteOff(pitch, track?.channel ?? 0).catch(() => {});
     },
-    [selectedTrack, track?.channel],
+    [track?.channel],
   );
 
   const previewNote = useCallback(
     (pitch: number) => {
-      noteOn(pitch, KEYBOARD_VELOCITY);
+      noteOn(pitch);
       // Auditioning a note in the roll should be a blip, not a held tone.
       window.setTimeout(() => noteOff(pitch), 180);
     },
@@ -461,6 +485,7 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
                 playheadTicks={positionTicks}
                 onScrub={seek}
                 loopRegion={loopRegion}
+                preview={aiPreview?.diff ?? null}
               />
             ) : (
               <p className="muted">No track selected.</p>
@@ -534,14 +559,17 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
 
               <hr className="inspector__rule" />
 
-              <div className="placeholder placeholder--compact">
-                <span className="placeholder__phase">Phase 6</span>
-                <span className="placeholder__title">AI prompt</span>
-                <span className="placeholder__detail">
-                  Describe an edit against the current selection; the change previews as a diff
-                  before it is applied.
-                </span>
-              </div>
+              <AiPanel
+                trackIndex={selectedTrack}
+                selection={selection}
+                settingsRevision={settingsRevision}
+                onApplied={(state) => {
+                  setEditor(state);
+                  setSelection(state.affected);
+                }}
+                onPreviewChange={setAiPreview}
+                onOpenSettings={onOpenSettings}
+              />
             </div>
           ) : (
             <p className="muted" style={{ padding: "var(--space-4)" }}>
@@ -586,7 +614,7 @@ export function Editor({ projectId, onClose, onOpenSettings }: EditorProps) {
         </div>
         <div className="editor__keyboard">
           <OnScreenKeyboard
-            velocity={KEYBOARD_VELOCITY}
+            velocity={keyboardVelocity}
             channel={track?.channel ?? 0}
             onNoteOn={noteOn}
             onNoteOff={noteOff}

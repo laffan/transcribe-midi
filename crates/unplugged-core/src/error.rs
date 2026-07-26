@@ -66,6 +66,14 @@ pub enum CoreError {
 
     #[error("could not write MIDI data: {0}")]
     MidiWrite(#[source] midly::Error),
+
+    /// A request that is well-formed but musically or structurally impossible.
+    ///
+    /// Phase 6's tool layer leans on this: the message goes back to the model as a tool
+    /// result so it can correct itself, so the text is written to be read by the model
+    /// as much as by a person.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl CoreError {
