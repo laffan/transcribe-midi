@@ -1,7 +1,7 @@
 import AVFoundation
 // AudioToolbox and CoreAudio are imported explicitly rather than relied on to arrive
-// through AVFoundation: `AudioUnitAddRenderNotify`, `AUEventSampleTimeImmediate` and the
-// `kAUSampler_*` constants live in them, and transitive module re-export is not
+// through AVFoundation: `AUEventSampleTimeImmediate`, `AudioUnitRenderActionFlags` and
+// the `kAUSampler_*` constants live in them, and transitive module re-export is not
 // guaranteed across toolchain versions.
 import AudioToolbox
 import CoreAudio
@@ -41,7 +41,8 @@ public final class AudioGraph {
     private var renderState: UnsafeMutableRawPointer?
 
     private var eventBuffer: UnsafeMutablePointer<UnpluggedRenderedEvent>
-    private var renderNotifyInstalled = false
+    /// Token from `AUAudioUnit.token(byAddingRenderObserver:)`; `nil` when not installed.
+    private var renderObserverToken: Int?
     private var isRunning = false
 
     private var lastError: String = ""
@@ -66,6 +67,9 @@ public final class AudioGraph {
 
     deinit {
         stop()
+        // Must come before the buffer is freed: the observer touches `eventBuffer` on the
+        // audio thread, and `unowned(unsafe)` gives it no protection against use-after-free.
+        removeRenderObserver()
         eventBuffer.deinitialize(count: Self.maxEventsPerBuffer)
         eventBuffer.deallocate()
         if let renderState {
@@ -283,42 +287,38 @@ public final class AudioGraph {
 
     // MARK: - Render callback
 
-    /// Install a pre-render notify on the main mixer.
+    /// Install a pre-render observer on the output node.
     ///
-    /// This fires on the audio thread once per render quantum, *before* the mixer pulls
-    /// its inputs — so MIDI scheduled here lands in the buffer being rendered right now.
-    /// That is what makes output sample-accurate rather than buffer-quantised.
+    /// Fires on the audio thread once per render quantum. It is attached to the **output**
+    /// node rather than the main mixer because the output node is what drives the pull:
+    /// its pre-render runs before it pulls the main mixer, which in turn pulls the
+    /// samplers. Scheduling here therefore lands in the buffer being rendered right now,
+    /// which is what makes output sample-accurate rather than buffer-quantised.
+    ///
+    /// `AVAudioNode` exposes `auAudioUnit` (an `AUAudioUnit`), not the legacy
+    /// `AudioUnit`/`AudioComponentInstance` that `AudioUnitAddRenderNotify` expects — so
+    /// the modern `token(byAddingRenderObserver:)` is the right hook here.
     private func installRenderNotifyIfNeeded() {
-        guard !renderNotifyInstalled else { return }
+        guard renderObserverToken == nil else { return }
 
-        let unit = engine.mainMixerNode.audioUnit
-        guard let unit else {
-            setError("main mixer has no audio unit; cannot install the render callback")
-            return
-        }
-
-        let context = Unmanaged.passUnretained(self).toOpaque()
-
-        let status = AudioUnitAddRenderNotify(
-            unit,
-            { (inRefCon, ioActionFlags, _, _, inNumberFrames, _) -> OSStatus in
+        // `unowned(unsafe)` rather than a strong or `weak` capture. Strong would be a
+        // retain cycle (self -> engine -> outputNode -> AU -> observer -> self), and
+        // `weak` performs a runtime check that is not realtime-safe. The observer is
+        // removed in `deinit`, so it cannot outlive `self`.
+        renderObserverToken = engine.outputNode.auAudioUnit.token(
+            byAddingRenderObserver: { [unowned(unsafe) self] actionFlags, _, frameCount, _ in
                 // ---- AUDIO THREAD ----
                 // No allocation, no locks, no Swift runtime calls that could allocate.
-                guard ioActionFlags.pointee.contains(.unitRenderAction_PreRender) else {
-                    return noErr
-                }
-                let graph = Unmanaged<AudioGraph>.fromOpaque(inRefCon).takeUnretainedValue()
-                graph.renderTick(frames: inNumberFrames)
-                return noErr
-            },
-            context
+                guard actionFlags.contains(.unitRenderAction_PreRender) else { return }
+                self.renderTick(frames: frameCount)
+            }
         )
+    }
 
-        if status != noErr {
-            setError("AudioUnitAddRenderNotify failed with status \(status)")
-            return
-        }
-        renderNotifyInstalled = true
+    private func removeRenderObserver() {
+        guard let token = renderObserverToken else { return }
+        engine.outputNode.auAudioUnit.removeRenderObserver(token)
+        renderObserverToken = nil
     }
 
     /// Pull this buffer's events from Rust and schedule them.

@@ -435,9 +435,14 @@ host. Specifically unverified:
    invocation and the `--triple` values for device vs simulator are best-effort.
 3. The linkage itself: whether the Rust staticlib and Swift static library resolve each
    other's symbols, and whether the Swift runtime search path is right.
-4. That `AudioUnitAddRenderNotify` on `mainMixerNode` fires before the samplers render.
-   If it fires too late, events land a buffer late — audible as sloppy timing, not as a
-   crash. This is the single most likely thing to be subtly wrong.
+4. ~~That `AudioUnitAddRenderNotify` on `mainMixerNode` fires before the samplers
+   render.~~ **Corrected on first Mac build** — `AVAudioNode` has no `audioUnit` member;
+   that API was invented. It exposes `auAudioUnit` (an `AUAudioUnit`), whose modern
+   equivalent is `token(byAddingRenderObserver:)`. The observer now attaches to the
+   **output** node rather than the main mixer, because the output node drives the pull:
+   its pre-render runs before it pulls the mixer, which pulls the samplers. Whether
+   events actually land in the same buffer is still unverified by ear — see the timing
+   check below.
 5. Whether `scheduleMIDIEventBlock` is non-null on `AVAudioUnitSampler` in practice.
 6. `struct` layout agreement between `CRenderedEvent` (Rust) and `UnpluggedRenderedEvent`
    (C). Field order and the explicit 2-byte padding must match; a mismatch would produce
@@ -459,3 +464,28 @@ host. Specifically unverified:
 - [ ] Undo/redo a long editing session and confirm it lands exactly where it started.
 - [ ] On iOS: confirm audio plays with the device muted-switch on (playback category),
       and that backgrounding does not kill the engine.
+
+### First Mac build — what the round trip actually cost
+
+Three build-and-report cycles to get Swift compiling, and the first two were spent on
+problems I created rather than on the audio design:
+
+1. **`build.rs` hid the error.** It emitted `cargo:warning` on a `swift build` failure and
+   let the link proceed, producing a 200-line "undefined symbols" wall that named the
+   symptom and not the cause. Cargo also hides build-script output unless run with `-vv`,
+   so Swift's diagnostics were never printed at all. Fixed: the script now captures
+   Swift's output, re-emits it line by line through `cargo:warning`, and panics at the
+   point of failure. This is the change that actually unblocked diagnosis.
+2. **`AVAudioNode.audioUnit` does not exist.** I wrote a plausible-looking API from
+   memory. The real one is `auAudioUnit`.
+
+The lesson worth keeping: for native code that cannot be compiled on the development
+host, **the error-reporting path is part of the deliverable**. Getting a real diagnostic
+back on the first Mac build is worth more than any amount of careful guessing, and a
+soft-failing build script destroys exactly that.
+
+A useful detail from the failing log: `Emitting module` and `Compiling Bridge.swift` both
+succeeded before `AudioGraph.swift` failed, which means the whole FFI surface and every
+declaration type-checked — including the C `uint8_t _pad[2]` → Swift `(UInt8, UInt8)`
+tuple import that item 6 above flagged as a risk. That narrows the remaining unknowns to
+runtime behaviour rather than API shape.
