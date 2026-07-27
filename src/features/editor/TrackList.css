@@ -1,0 +1,68 @@
+/* The track column. Rules live here rather than in Editor.css so the panel's styling
+   travels with the component that owns its markup. */
+
+/* ------------------------------------------------------------ tracklist -- */
+
+.tracklist {
+  list-style: none;
+  padding: var(--space-1);
+  overflow-y: auto;
+  max-height: 40%;
+  flex-shrink: 0;
+}
+
+.tracklist__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background var(--transition-fast);
+}
+
+.tracklist__item:hover {
+  background: var(--bg-2);
+}
+
+.tracklist__item--selected {
+  background: var(--accent-muted);
+  border-left-color: var(--accent);
+}
+
+.tracklist__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tracklist__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.tracklist__count {
+  font-size: var(--text-xs);
+}
+
+.tracklist__remove {
+  opacity: 0;
+  height: 20px;
+  width: 20px;
+  font-size: var(--text-xs);
+}
+
+.tracklist__item:hover .tracklist__remove,
+.tracklist__item:focus-within .tracklist__remove {
+  opacity: 1;
+}
+
+@media (max-width: 900px) {
+  /* Touch has no hover, so the delete button cannot hide behind one. */
+  .tracklist__remove {
+    opacity: 1;
+  }
+}

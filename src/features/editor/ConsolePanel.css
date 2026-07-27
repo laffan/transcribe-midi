@@ -1,0 +1,97 @@
+/* The log drawer. */
+
+/* -------------------------------------------------------------- console -- */
+
+.console {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.console__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.console__title {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding-left: var(--space-1);
+}
+
+.console__count {
+  font-size: var(--text-xs);
+}
+
+.console__body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.console__empty {
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.console__list {
+  list-style: none;
+}
+
+.console__entry {
+  display: flex;
+  gap: var(--space-2);
+  padding: 2px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  border-left: 2px solid transparent;
+}
+
+.console__entry:hover {
+  background: var(--bg-1);
+}
+
+.console__entry--warn {
+  border-left-color: var(--warning);
+}
+.console__entry--error {
+  border-left-color: var(--danger);
+}
+
+.console__time {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.console__level {
+  width: 42px;
+  flex-shrink: 0;
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.console__entry--warn .console__level {
+  color: var(--warning);
+}
+.console__entry--error .console__level {
+  color: var(--danger);
+}
+
+.console__message {
+  color: var(--text-1);
+  word-break: break-word;
+}
+
+.console__detail {
+  color: var(--text-2);
+}

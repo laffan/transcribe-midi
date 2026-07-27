@@ -1,4 +1,5 @@
 import { clearLog, useLog } from "../../lib/console";
+import "./ConsolePanel.css";
 
 /**
  * The optional error console beneath the transport. Newest entry first — during
