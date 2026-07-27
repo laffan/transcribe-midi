@@ -48,6 +48,10 @@ audio-to-MIDI transcription with a waveform fine-tuning editor, AI edits with di
 preview, MIDI import/export, and a first-pass AUv3 plugin that builds, installs and
 registers. Not built yet: notation view, polyphonic transcription.
 
+The code is organised so the folder structure is the architecture: every area of the app is
+a directory of small, single-purpose modules, and no file in the repo is longer than 700
+lines. README-TECHNICAL.md says why, and how to keep it that way.
+
 ## More
 
 - [README-TECHNICAL.md](./README-TECHNICAL.md) — architecture, coding standards, and the

@@ -37,6 +37,41 @@ scripts/                     install-plugin.sh / verify-plugin.sh — build, ins
                              register and interrogate the plugin.
 ```
 
+Inside the three crates that carry most of the logic, the directory *is* the design. Each
+`mod.rs` opens with a table of its own files, so the map below is a summary, not the
+authority:
+
+```
+unplugged-core/src/
+  ai/         context, tools, schema, workspace, ops, generate, diff, rng
+              — laid out along the path one model request takes
+  command/    transaction (what an edit is), session (what applies it),
+              edits (gesture → transaction)
+  music/      pitch → scale → key → chord → roman, in dependency order
+  sequencer/  event, timeline (control thread), scheduler (audio thread)
+  smf/        write, read, import, tempo — split by direction of travel
+  {model,store,recorder,host_sync,build_info,error}.rs
+
+unplugged-transcribe/src/
+  dsp, pitch, onset, tempo        the four pipeline stages
+  frame, options                  measurements out, knobs in
+  pipeline                        the stages in order, and nothing else
+  assemble                        frames → notes: the segmentation judgement calls
+  waveform                        min/max buckets for the fine-tuning view
+
+unplugged-plugin/src/
+  abi         every extern "C" entry point — the only file with raw pointers
+  plugin      the state and the render path, as ordinary Rust
+  event       the one #[repr(C)] struct the Swift header mirrors
+```
+
+The editor feature follows the same rule with hooks in place of modules: `Editor.tsx` is
+layout and wiring only, and each concern owns its own state and effects in
+`useEditorSession`, `useTransport`, `useInputSettings`, `useLiveNotes`, `usePendingEdit`
+and `useEditorShortcuts`. The piano roll splits the same way — `pianoRollGeometry`
+(maths), `pianoRollPaint` (one pure paint function), `pianoRollTheme`, and a hook each for
+the view, the pointer gestures and the keys.
+
 Dependency direction is one-way and enforced by the workspace: `unplugged-core` depends on
 nothing of ours; every other crate may depend on core; `src-tauri` and
 `crates/unplugged-plugin` are leaves. If you find yourself wanting core to know about
@@ -69,8 +104,16 @@ nobody had pinned down in code. So the standard is explicit:
    instead of three. Never mutate a project behind its back.
 
 5. **Prefer a new small crate/module over a clever addition to a big one.** `host_sync`,
-   `build_info` and `shared_container` are each ~100–200 lines with exhaustive tests.
-   That shape — small, pure, hammered by tests — is the target for new work.
+   `build_info`, `shared_container`, `smf/tempo`, `music/pitch` and `pianoRollTheme` are all
+   somewhere between 20 and 200 lines with a single job. That shape — small, pure, hammered
+   by tests — is the target for new work, and no module is too small to deserve its own file
+   if it has its own reason to change.
+
+6. **Every module says what it is for.** The first thing in a file is a doc comment naming
+   the one concept it holds and, where it is not obvious, why that concept is *not* in the
+   file next to it. A `mod.rs` (or an index component) additionally carries a table of its
+   own children, so the directory listing and the prose cannot drift apart. This is the part
+   that makes a split worth doing rather than just a way of getting under a line count.
 
 ### The 700-line rule
 
@@ -84,20 +127,41 @@ a Rust module becomes a directory (`ai.rs` → `ai/tools.rs`, `ai/workspace.rs`,
 splits by the component it styles. Do not comply by deleting comments or compressing
 style — the limit exists to force *modularity*, not terseness.
 
-**Current violations (debt register).** These predate the rule. Do not add to them; when
-you touch one substantially, split it as part of the change:
+**The register is empty.** Every file in the repo is under the limit. There is no debt to
+work around and no precedent for adding any. To check:
 
-| File | Lines | Suggested split |
-|---|---|---|
-| `crates/unplugged-core/src/ai.rs` | ~2070 | `ai/` dir: tool defs, workspace, diff/transaction, rng, tests |
-| `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
-| `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
-| `crates/unplugged-core/src/command.rs` | ~840 | commands vs. history vs. tests |
-| `src/features/editor/Editor.tsx` | ~830 | extract keyboard handling + selection logic hooks |
-| `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
-| `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
-| `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
-| `src/features/editor/PianoRoll.tsx` | ~750 | grid math + interaction hooks out |
+```bash
+find . \( -path ./node_modules -o -path ./target -o -path ./dist -o -path ./.git \) -prune \
+  -o -type f \( -name '*.rs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.swift' \
+  -o -name '*.css' -o -name '*.sh' -o -name '*.h' \) -print0 \
+  | xargs -0 wc -l | awk '$1 > 700 && $2 != "total"'
+```
+
+**Closest to the limit**, and therefore what to split next rather than add to:
+`unplugged-core/src/store.rs` (~656 — migration, listing and atomic writes, with its tests
+inline), `src-tauri/src/transcribe.rs` (~548) and `src/features/editor/TranscribeEditor.tsx`
+(~547). None is over, so none is debt; all three are close enough that the next substantial
+change to one should split it first.
+
+Two things that split badly, recorded so the reasoning is not rediscovered:
+
+- **`sequencer/scheduler.rs`** stays one file at ~460 lines even though it has obvious
+  internal seams. Everything reachable from `Sequencer::render` runs on the audio thread
+  and must not allocate or lock, and that is far easier to audit with the whole call graph
+  in front of you than spread over four files.
+- **`pianoRollPaint.ts`** stays one function at ~290 lines. On a canvas the drawing order
+  *is* the logic — the keyboard gutter is painted after the notes so notes scrolled off the
+  left are covered rather than clipped, and the playhead is last so nothing hides it.
+  Layers in separate files could have that order changed by accident.
+
+Both say so in their own module doc. If a future split looks tempting, the argument against
+it is already written down where you will find it.
+
+**Test files are modules too.** Every split module keeps its tests in a `tests/`
+sibling directory grouped the way the code is — `ai/tests/pitch.rs`,
+`sequencer/tests/metronome.rs` — with shared fixtures in `tests/mod.rs`. Widening a field to `pub(super)` so
+a test in the same module tree can assert an internal invariant is fine and is done in a
+few places; say why in a comment on the field, as `EditSession::undo_stack` does.
 
 ## Coding standards
 
@@ -153,8 +217,9 @@ test or a greppable comment chain:
 | App Group id `group.com.unplugged.daw` | `src-tauri/Entitlements-Signed.plist`, `plugin/Support/*-Signed.entitlements`, `shared_container.rs::APP_GROUP`, `UnpluggedAudioUnit.swift` |
 | Shared data path `~/Library/Application Support/Unplugged` | `shared_container.rs::HOME_RELATIVE_DIR`, `UnpluggedAudioUnit.swift::homeRelativeDataDirectory`, `plugin/Support/UnpluggedAU.entitlements` (tested: `the_three_places_that_name_the_shared_path_agree`) |
 | AU identity `aumi` / `Unpl` / `Lffn` | `plugin/Support/Info.plist`, `scripts/verify-plugin.sh`, any docs |
-| `CRenderedEvent` layout | `crates/unplugged-plugin/src/lib.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` |
+| `CRenderedEvent` layout | `crates/unplugged-plugin/src/event.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` ↔ `crates/unplugged-audio/src/lib.rs` |
 | Bundle-id prefix rule | extension id must be prefixed by its container app's id (`project.yml` explains) |
+| The shortcut list | `src/features/editor/ShortcutList.tsx` (what the user is told), `useEditorShortcuts.ts` and `usePianoRollKeys.ts` (what actually fires), and the section below (what a manual test reads from) |
 
 ## Project format
 
@@ -206,6 +271,11 @@ breakage without a Mac; they do not catch Swift, which only a Mac build verifies
 which is why every Swift-touching change ends with "run `scripts/install-plugin.sh
 --debug` and send the errors" rather than a claim of success.
 
+Two things that bite on a fresh clone or a Linux CI host, neither of them a repo problem:
+`npm run build` needs `npm ci` first, and the `unplugged` crate is a Tauri binary that wants
+GTK, so add `--exclude unplugged` to the test and clippy lines where those libraries are not
+installed. Everything with logic in it is in the pure crates and runs anywhere.
+
 On a Mac:
 
 ```bash
@@ -226,6 +296,10 @@ undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q
 `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
 `W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
 click empty grid draws, drag marquee-selects.
+
+The handlers are `useEditorShortcuts.ts` (global) and `usePianoRollKeys.ts` (note editing,
+suppressed while a proposal is on screen); `ShortcutList.tsx` is what the user is shown. All
+four places have to agree — see the invariants table.
 
 ## Working agreements
 
