@@ -14,6 +14,23 @@ export const PITCH_COUNT = MAX_PITCH - MIN_PITCH + 1;
 /** Pixels within which a pointer counts as grabbing a note's right edge to resize. */
 export const RESIZE_HANDLE_PX = 6;
 
+/** Height of the velocity lane beneath the roll. */
+export const VELOCITY_LANE_HEIGHT = 72;
+
+/**
+ * Where a velocity bar's zero and full-scale sit, given the roll's height.
+ *
+ * Shared by the painter and the drag handler on purpose: they have to agree exactly, or a
+ * bar would settle at a different height from the one the pointer was at.
+ */
+export function velocityLane(rollHeight: number): { top: number; bottom: number; height: number } {
+  return {
+    top: rollHeight,
+    bottom: rollHeight + VELOCITY_LANE_HEIGHT - 6,
+    height: VELOCITY_LANE_HEIGHT - 22,
+  };
+}
+
 export interface Viewport {
   /** Horizontal zoom. */
   pxPerTick: number;
