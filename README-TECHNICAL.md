@@ -163,6 +163,7 @@ test or a greppable comment chain:
 | Shared data path `~/Library/Application Support/Unplugged` | `shared_container.rs::HOME_RELATIVE_DIR`, `UnpluggedAudioUnit.swift::homeRelativeDataDirectory`, `plugin/Support/UnpluggedAU.entitlements` (tested: `the_three_places_that_name_the_shared_path_agree`) |
 | AU identity `aumi` / `Unpl` / `Lffn` | `plugin/Support/Info.plist`, `scripts/verify-plugin.sh`, any docs |
 | `CRenderedEvent` layout | `crates/unplugged-plugin/src/lib.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` |
+| Only the read path decrypts the API key | `Keychain.swift` ↔ `keychain.rs` — status is answered from item *attributes*, never `kSecReturnData` (tested: `only_the_read_path_asks_the_keychain_for_the_secret`) |
 | Bundle-id prefix rule | extension id must be prefixed by its container app's id (`project.yml` explains) |
 
 ## Project format

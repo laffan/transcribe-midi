@@ -1964,3 +1964,95 @@ and two of these changes did:
 `PianoRoll.tsx` grew by seven lines — the `shortcutsSuspended` prop and its guard — and is
 still on the register at ~755. That is not a substantial touch and it was not split;
 saying so here is the alternative to pretending it did not happen.
+
+---
+
+## The Keychain prompt on every launch
+
+**Reported:** "unplugged wants to use your confidential information stored in
+'com.unplugged.daw' in your keychain" on every open. It was a real bug, and it violated
+this project's own stated rule.
+
+### What was happening
+
+`PromptBar` asks `ai_status()` when it mounts, which is every time a project opens — it
+needs to know whether to show "Set up AI". `ai_status` called `has_api_key()` and
+`key_hint()`, and *both* of those called `api_key()`, which is a full
+`SecItemCopyMatching` with `kSecReturnData`.
+
+So the app decrypted the user's Anthropic API key twice at launch, to render a boolean and
+four characters, before being asked to do anything. macOS consults an item's access
+control list when the **secret** is released, so that read is exactly what raises the
+dialog — and because the dialog says "macOS" rather than "this line of code", it read as
+an OS quirk rather than as the app doing something it should not.
+
+README-TECHNICAL has said since Phase 6 that the key "is read only inside `unplugged-ai`,
+immediately before a request". `ai_status` is not immediately before a request. The rule
+was right; the code had drifted from it, and nothing failed when it did.
+
+### The fix
+
+**Status is answered from the item's attributes, which never releases the secret.**
+
+- `unplugged_platform_keychain_has` — `SecItemCopyMatching` with `kSecReturnAttributes`
+  and no `kSecReturnData`. Existence, silently.
+- `unplugged_platform_keychain_hint` — the last four characters, read from
+  `kSecAttrComment`, where `set` now writes them.
+
+Storing the hint as an attribute is the part worth arguing about, and it holds: those four
+characters were *already* designed to cross into the webview. Keeping them where they can
+be read without decrypting anything is strictly less exposure than decrypting the whole key
+to derive them, which is what happened before. A key stored by an older build has no
+comment, so its hint comes back `None` and the panel shows "stored" — which it already did
+for that case.
+
+`unplugged_platform_keychain_get` is now the only thing in the app that can prompt, and it
+is reached from exactly two places, both immediately before an HTTPS request:
+`propose_edit` and `available_models`.
+
+**There is a test, because nothing fails if this drifts back.** It reads `Keychain.swift`,
+strips the comments, and asserts `kSecReturnData` appears exactly once and inside the
+getter. Same shape as `the_three_places_that_name_the_shared_path_agree`, and for the same
+reason: the compiler cannot connect these two files, and the symptom of them disagreeing is
+a system dialog nobody traces back to a commit.
+
+### What this does not fix, and should not
+
+Opening **Settings** with a key set still reads it, because it lists the available models —
+that is a real request, and a prompt there is the Keychain working. Pressing **⌘K** and
+describing an edit will prompt the first time too.
+
+What *will* still prompt more than once is a rebuild. A Keychain ACL trusts a specific code
+signature, and an ad-hoc-signed build gets a new one every time it is built, so "Always
+Allow" only holds until the next `install-plugin.sh`. That is a consequence of the
+no-paid-team decision recorded in Phase 10, not of this code, and it goes away with a
+stable signing identity.
+
+### Not verified — needs a Mac
+
+None of the Swift compiles here. In rough order of risk:
+
+1. **Whether an attributes-only query really is silent.** This is the mechanism the whole
+   fix rests on, and it is remembered rather than measured: macOS gates the ACL on
+   releasing `kSecValueData`, so a `kSecReturnAttributes` query should not prompt. If the
+   dialog still appears at launch, that premise is wrong and the hint has to move to
+   `ai.json` instead, leaving `has` as the only Keychain call.
+2. **`unplugged_platform_keychain_set` gained a third parameter.** Both sides of the ABI
+   are updated in this commit, but a mismatch here is a link error at best.
+3. **`kSecAttrComment` on a generic password.** Believed available on both platforms. If
+   `SecItemAdd` starts returning `errSecParam` (-50) after this, that attribute is the
+   first thing to drop.
+4. Whether an existing key survives. It should — nothing touches the stored item until the
+   next `set` — but its hint will read "stored" until the key is entered again.
+
+### What a human should test manually
+
+- [ ] Open the app with a key already stored. **No Keychain dialog.**
+- [ ] Confirm the prompt bar still knows a key is set (no "Set up AI" button).
+- [ ] Open Settings. A dialog here is expected and correct; choose Always Allow.
+- [ ] The key row shows "stored" rather than the last four — that is the old item having no
+      comment. Re-enter the key and confirm it becomes "…abcd".
+- [ ] Quit, reopen: still no dialog at launch, and the hint persists.
+- [ ] Clear the key in Settings, confirm the prompt bar offers "Set up AI" again.
+- [ ] In Keychain Access, confirm the item is now labelled "Unplugged — Anthropic API key"
+      rather than only by its service.
