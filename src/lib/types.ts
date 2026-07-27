@@ -309,6 +309,15 @@ export interface TranscriptionPreview {
 /** Min/max pairs for drawing a waveform. */
 export type WaveformPeaks = [number, number][];
 
+/**
+ * What playing a take back should sound. Mirrors `AuditionSource` in
+ * `src-tauri/src/audition.rs`.
+ *
+ * `midi` is the default: the notes are the thing being judged, and the recording is what
+ * you compare them against rather than the other way round.
+ */
+export type AuditionSource = "midi" | "take" | "both";
+
 /** Mirrors `BuildInfo` in unplugged-core. */
 export interface BuildInfo {
   version: string;

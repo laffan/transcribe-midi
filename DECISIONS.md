@@ -1588,3 +1588,171 @@ Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of 
 - [ ] Save the Logic project, reopen it, confirm the same Unplugged project is selected.
 - [ ] Delete that project in the app, reopen the Logic session, confirm it loads with
       nothing selected rather than failing.
+
+---
+
+## The toolbar, and Listen as a place rather than a strip
+
+Two changes that look like layout and are not. The first says where a control belongs;
+the second says what the transcription feature *is*.
+
+### Controls were sorted by when they were built, not by what they are
+
+The bottom bar had become the place a control went when it needed a home: play beside
+record beside listen beside loop beside the clock beside undo beside save. Two different
+kinds of thing were in one row — "hear this project" is about the whole document, "record
+a take" is about making something new — and the row could only grow.
+
+The split is now by scope, and it is a rule rather than a tidy-up:
+
+- **The toolbar is what concerns the project.** What is on screen (keyboard, history),
+  what the transport is doing, what is open (settings, console, import).
+- **The bar under the roll is what makes and unmakes notes.** Record and Listen — the two
+  ways a performance becomes notes — then loop and click, then undo/redo/save/panic.
+
+Play, pause, stop, the clock and the tempo moved up. Nothing is in both places; a control
+in two bars is two states to keep in step and one of them will be wrong.
+
+**Pause and stop are now different buttons, and neither is new behaviour.** Rust's
+`transport_stop` has always stopped where it was — that is a pause — and the only way to
+get back to the top was to press the return-to-zero button beside it. Logic, Live and
+every hardware transport since tape distinguish the two; the app was quietly offering one
+of them under the other's name. Stop is `transport_stop` followed by `transport_seek(0)`,
+which is exactly what the two old buttons did in sequence.
+
+**The clock shows a bar or a note.** Bars|beats|ticks is what a DAW's LCD says, and it is
+right for placing an edit. But this app's input is a sung line, and the question asked of
+a playhead here is at least as often "what note is that?" — which the roll answers only if
+you can find the playhead on it. Clicking the readout switches. It is one panel rather
+than three controls near each other for the same reason Logic's LCD is one panel: position
+and tempo are read together.
+
+**Keys and History hide by removing their grid track, not by `display: none`.** A hidden
+panel that still holds its space is not hidden, and this layout is explicit rows and
+columns — an explicit grid row exists whether or not anything is in it, so the row goes
+too (`.editor--no-keyboard`, `.editor--no-history`).
+
+**Import moved to the toolbar, out of the inspector's Import/Export group.** Bringing
+material in is a top-level act like opening a project; exporting is something you do to a
+track you are looking at. The preview-then-import sequence — which is what makes a PPQ
+rescale an announcement rather than a surprise — is now in `importSmf.ts` so there is one
+of it.
+
+### Listening happened in the smallest space on screen
+
+The flow was: press Listen, get a strip along the bottom of the window, perform, press
+stop, *then* get a full-window editor. The least reversible part of the whole feature —
+the performance, which cannot be re-run without doing it again — had the least room, and
+the part you can redo endlessly had the most.
+
+It is one continuous activity: you play something, you look at what came back, you fix it
+or you do it again. So it is one surface for the duration and the stage inside it changes.
+`ListenOverlay` is the frame; `ListenCapture` and `TranscribeEditor` are the two stages.
+
+`pending` deliberately outlives the overlay. Closing it puts the take back in the review
+bar rather than throwing it away, so "let me look at the roll first" is not a decision to
+discard.
+
+### You could hear the recording but not the result
+
+Phase 9 added take playback and its own comment argued for it: hearing the sampler play
+the transcription tells you what the *transcriber* heard, hearing the take tells you what
+you played. Both halves are true and the conclusion drawn from them was half right. The
+notes are the thing being decided about. Offering only the recording meant the one way to
+hear the actual result was to accept it and find out — which is the wrong order for a
+feature whose entire premise is "look before it lands".
+
+So both play, MIDI is the default, and `Both` exists because the comparison is the point.
+
+**Why a scheduler thread and not the sequencer.** The sequencer is driven by the audio
+thread and owns one timeline — the project's. Auditioning a proposal through it would mean
+swapping that timeline out and putting it back, with the transport's position and the
+playhead events going somewhere strange in between, to play four bars. Instead
+`unplugged_core::audition` places the note boundaries in seconds (pure, tested) and
+`src-tauri/src/audition.rs` walks them against a wall clock, sounding them on the sampler
+by the same path as the on-screen keyboard.
+
+That trades sample accuracy for independence. It is the right trade here and nowhere else:
+nothing in this path is on the audio thread, and a couple of milliseconds of jitter is
+inaudible in a phrase you are listening to in order to decide whether a note is wrong. It
+would not be an acceptable trade for playback of the project, which is why this is a
+separate module rather than a second way to play.
+
+Details worth knowing:
+
+- **Cancellation is a counter, not a flag.** `stop` immediately followed by `play` must not
+  let the outgoing thread's next boundary land inside the incoming run. The thread checks
+  its generation every 2 ms, which is also how long a stop takes to silence a held note.
+- **The thread releases what it sounded.** Not `all_notes_off`, which would also kill live
+  keyboard notes.
+- **The recording's clock wins when it is playing.** `capture_audition_position` prefers
+  the preview player's position and falls back to the scheduler's, because the sample clock
+  is the one the ear is following when both are running.
+- **A partially available source is not an error.** Off-Apple the preview player refuses and
+  the sampler is silent; asking for `Both` there still succeeds if the notes were scheduled,
+  because the transcription is perfectly reviewable on a machine that cannot play it.
+- **The tempo is not recomputed.** Rust derives ticks-per-second from
+  `capture.analysis.tempo_bpm` — the tempo the notes were actually placed with — which is
+  the same number the editor draws them against. A second derivation would drift.
+
+`capture_preview_play/stop/position` are gone; `capture_audition_play/stop/position`
+replace them, with a `source` of `midi` | `take` | `both`.
+
+### What was verified
+
+- **315 Rust tests** (up from 302), clippy clean, `npm run build` clean, both Apple targets
+  compile-check.
+- New tests cover the audition schedule — a note straddling the start point keeps its
+  remainder, a release sorts before a retrigger at the same instant, a nonsense tempo
+  schedules nothing — and the run bookkeeping: a stop makes the running generation stale,
+  a late-finishing run does not clear a later one's clock, a run past its end reports no
+  position.
+- The toolbar, its toggles and both overlay stages were driven in the browser preview at
+  1440 and 880 px, with the console watched for errors. The mock was faked *temporarily*
+  to render the overlay and reverted — `mockBackend.ts` still refuses transcription on
+  purpose, and should stay that way.
+
+### Not verified — needs a Mac and a microphone
+
+1. **Whether the MIDI audition makes a sound at all.** The scheduler reaches the sampler
+   through `AudioEngine::note_on`, the same call the on-screen keyboard makes, so if keys
+   sound this should. But it has only ever run against the null backend.
+2. **Whether the timing is good enough.** Wall-clock scheduling with a 2 ms poll should
+   place a note within a few milliseconds. If it audibly stutters under load, the fix is
+   not a smaller poll — it is to render the pending notes through the preview player as
+   audio, which is a bigger change.
+3. **`Both`, together.** The two players are started one after the other from the same
+   command, so they may be a few milliseconds apart. Whether that reads as "in sync" or as
+   flam is a question for ears.
+4. **Whether stopping ever leaves a note hanging.** The thread releases what it holds
+   within 2 ms of a cancellation; Panic is still there if it does not.
+5. **The transport glyphs.** `⏸` and `⏹` do not render in the Linux preview's fonts. `⏹`
+   and `⏮` were already in use and presumably rendered on macOS, so `⏸` should too — if it
+   comes out as a box, that is a font fallback, not a bug.
+
+### What a human should test manually
+
+- [ ] Play, pause, play again — the playhead resumes where it stopped. Stop returns to the
+      top.
+- [ ] `Space` still plays and pauses; it does nothing while the listen overlay is up.
+- [ ] Click the clock readout: it swaps between `1.1.000` and the note under the playhead.
+      Play through a phrase and confirm the note name follows.
+- [ ] Nudge the tempo with − and +, and type into the field. Confirm playback follows.
+- [ ] Toggle Keys and History off: nothing is left holding empty space, and the roll grows
+      into it.
+- [ ] Import from the toolbar. Confirm a rescale warning still appears for a file at a
+      different PPQ.
+- [ ] Press Listen: the overlay opens *immediately* and the waveform grows as you sing.
+- [ ] Stop & transcribe: the same window becomes the review stage without a flash of the
+      editor behind it.
+- [ ] Press Play there with **Notes** selected — the sampler plays the transcription.
+- [ ] Switch to **Recording** while it is playing: it continues from the same place with
+      the take instead.
+- [ ] Switch to **Both** and judge whether they line up.
+- [ ] Click partway along the waveform: playback starts from there, in the selected source.
+- [ ] Drag a note while it is playing; confirm nothing hangs.
+- [ ] Close the overlay with ✕ — the take is still offered in the review bar, and
+      "Fine-tune…" brings the overlay back with the same notes.
+- [ ] Add to track, then undo. One step.
+- [ ] Transcribe an audio *file* from the inspector — it should open the same overlay at
+      the review stage.

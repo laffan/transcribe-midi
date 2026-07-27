@@ -5,6 +5,7 @@
 //! The Tauri layer in `src-tauri` is a thin wrapper over this crate; logic belongs here.
 
 pub mod ai;
+pub mod audition;
 pub mod build_info;
 pub mod command;
 pub mod error;

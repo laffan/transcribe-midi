@@ -14,6 +14,9 @@
 //! waveform editor has something to draw and so the settings stay re-derivable. It is
 //! still not a recording: it is evidence attached to a take, not material in the
 //! arrangement — never mixed, bounced, exported, or written to disk.
+//!
+//! Playing any of it back — the recording, the notes, or both at once — lives in
+//! [`crate::audition`], which owns the one place either can be started or stopped.
 
 use std::sync::Mutex;
 
@@ -63,7 +66,7 @@ pub struct CaptureStatus {
     pub at_limit: bool,
 }
 
-fn locked(state: &AppState) -> CommandResult<std::sync::MutexGuard<'_, CaptureState>> {
+pub(crate) fn locked(state: &AppState) -> CommandResult<std::sync::MutexGuard<'_, CaptureState>> {
     state
         .capture
         .lock()
@@ -80,6 +83,10 @@ pub fn capture_start(state: State<'_, AppState>) -> CommandResult<CaptureStatus>
         },
         message: error.to_string(),
     })?;
+
+    // Nothing from the previous take may still be sounding over the new one.
+    state.audition.stop();
+    state.preview.stop();
 
     let mut capture = locked(&state)?;
     capture.samples.clear();
@@ -361,41 +368,6 @@ pub fn capture_waveform(
     ))
 }
 
-/// Play the retained take from `fromSeconds`.
-///
-/// The take, not the notes. Hearing the sampler play the transcription tells you what the
-/// *transcriber* heard; hearing the take tells you what you actually played, which is the
-/// comparison that lets you decide whether a note is wrong.
-#[tauri::command]
-pub fn capture_preview_play(state: State<'_, AppState>, from_seconds: f64) -> CommandResult<()> {
-    let (samples, sample_rate) = {
-        let capture = locked(&state)?;
-        (capture.samples.clone(), capture.sample_rate)
-    };
-
-    if samples.is_empty() || sample_rate <= 0.0 {
-        return Err(CommandError::from("there is no take to play".to_string()));
-    }
-
-    state
-        .preview
-        .load(&samples, sample_rate)
-        .and_then(|()| state.preview.play(from_seconds))
-        .map_err(|e| CommandError::from(e.to_string()))
-}
-
-#[tauri::command]
-pub fn capture_preview_stop(state: State<'_, AppState>) -> CommandResult<()> {
-    state.preview.stop();
-    Ok(())
-}
-
-/// Where playback has reached, or `None` when stopped. Polled to draw the playhead.
-#[tauri::command]
-pub fn capture_preview_position(state: State<'_, AppState>) -> CommandResult<Option<f64>> {
-    Ok(state.preview.position())
-}
-
 /// Replace the pending notes with ones the user adjusted in the editor.
 ///
 /// Validated here rather than trusted: these arrive from the webview, and a note that
@@ -454,6 +426,7 @@ pub fn capture_accept(state: State<'_, AppState>) -> CommandResult<EditorState> 
 
     // The take has become notes. Holding twenty-odd megabytes for a result the user has
     // already committed would be the retention turning into a leak.
+    state.audition.stop();
     state.preview.stop();
     if let Ok(mut capture) = state.capture.lock() {
         capture.samples = Vec::new();
@@ -469,6 +442,8 @@ pub fn capture_accept(state: State<'_, AppState>) -> CommandResult<EditorState> 
 #[tauri::command]
 pub fn capture_cancel(state: State<'_, AppState>) -> CommandResult<()> {
     state.mic.stop();
+    state.audition.stop();
+    state.preview.stop();
     let mut capture = locked(&state)?;
     capture.recording = false;
     capture.samples = Vec::new();

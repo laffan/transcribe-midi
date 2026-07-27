@@ -144,6 +144,12 @@ textarea {
   padding: 0;
 }
 
+/* A toggle that is on. Used by every bar that has one, so it lives with the button. */
+.btn--active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
 .btn--lg {
   height: 36px;
   padding: 0 var(--space-4);

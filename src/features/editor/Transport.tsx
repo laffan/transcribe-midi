@@ -1,75 +1,48 @@
-import type { TimeSignature } from "../../lib/types";
 import "./Transport.css";
 
 interface TransportProps {
-  playing: boolean;
   recording: boolean;
-  inCountIn: boolean;
   loopRegion: [number, number] | null;
   metronome: boolean;
-  positionTicks: number;
-  tempoBpm: number;
-  ppq: number;
-  timeSignature: TimeSignature;
   dirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
   undoLabel: string | null;
   redoLabel: string | null;
-  onPlay: () => void;
-  onStop: () => void;
   onRecord: () => void;
   /** Audio-to-MIDI capture. A peer of MIDI record, not a panel. */
   listening: boolean;
-  listenLevel: number;
   onListen: () => void;
   onToggleLoop: () => void;
   onToggleMetronome: () => void;
-  onReturnToZero: () => void;
-  onTempoChange: (bpm: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   onSave: () => void;
   onPanic: () => void;
 }
 
-/** Bars|beats|ticks, one-based, the way every DAW displays position. */
-function formatPosition(ticks: number, ppq: number, ts: TimeSignature): string {
-  const beatTicks = (ppq * 4) / ts.denominator;
-  const barTicks = beatTicks * ts.numerator;
-
-  const bar = Math.floor(ticks / barTicks) + 1;
-  const beat = Math.floor((ticks % barTicks) / beatTicks) + 1;
-  const tick = Math.floor(ticks % beatTicks);
-
-  return `${bar}.${beat}.${String(tick).padStart(3, "0")}`;
-}
-
+/**
+ * The bar under the roll: the ways notes arrive, and what to do with the ones that are
+ * already there.
+ *
+ * Play, the clock and the tempo moved to the toolbar, where the controls that concern the
+ * whole project live. What is left is deliberately of one kind — Record and Listen are the
+ * two ways a performance becomes notes, and the rest is the fate of an edit.
+ */
 export function Transport({
-  playing,
   recording,
-  inCountIn,
   loopRegion,
   metronome,
-  positionTicks,
-  tempoBpm,
-  ppq,
-  timeSignature,
   dirty,
   canUndo,
   canRedo,
   undoLabel,
   redoLabel,
-  onPlay,
-  onStop,
   onRecord,
   listening,
-  listenLevel,
   onListen,
   onToggleLoop,
   onToggleMetronome,
-  onReturnToZero,
-  onTempoChange,
   onUndo,
   onRedo,
   onSave,
@@ -78,22 +51,6 @@ export function Transport({
   return (
     <div className="transport">
       <div className="transport__group">
-        <button
-          className="btn btn--icon"
-          onClick={onReturnToZero}
-          aria-label="Return to zero"
-          title="Return to start"
-        >
-          ⏮
-        </button>
-        <button
-          className={`btn btn--icon ${playing ? "btn--active" : ""}`}
-          onClick={playing ? onStop : onPlay}
-          aria-label={playing ? "Stop" : "Play"}
-          title={playing ? "Stop (Space)" : "Play (Space)"}
-        >
-          {playing ? "⏹" : "▶"}
-        </button>
         <button
           className={`btn btn--icon ${recording ? "btn--recording" : ""}`}
           onClick={onRecord}
@@ -106,19 +63,10 @@ export function Transport({
         <button
           className={`btn btn--listen ${listening ? "btn--listening" : ""}`}
           onClick={onListen}
-          aria-label={listening ? "Stop listening and transcribe" : "Listen and transcribe"}
           aria-pressed={listening}
-          title={listening ? "Stop and transcribe (L)" : "Listen — turn audio into notes (L)"}
+          title="Listen — turn audio into notes (L)"
         >
-          {listening ? "Transcribe" : "Listen"}
-          {listening && (
-            <span className="transport__level" aria-hidden="true">
-              <span
-                className="transport__level-fill"
-                style={{ width: `${Math.min(100, listenLevel * 130)}%` }}
-              />
-            </span>
-          )}
+          Listen
         </button>
       </div>
 
@@ -144,31 +92,6 @@ export function Transport({
           Click
         </button>
       </div>
-
-      <div className="transport__position mono" aria-label="Playhead position">
-        {formatPosition(positionTicks, ppq, timeSignature)}
-        {inCountIn && <span className="transport__countin">count-in</span>}
-      </div>
-
-      <label className="transport__tempo">
-        <span className="transport__label">BPM</span>
-        <input
-          className="input transport__tempo-input mono"
-          type="number"
-          min={20}
-          max={300}
-          step={1}
-          value={Math.round(tempoBpm)}
-          onChange={(e) => {
-            const value = Number(e.target.value);
-            if (Number.isFinite(value) && value >= 20 && value <= 300) onTempoChange(value);
-          }}
-        />
-      </label>
-
-      <span className="transport__sig mono muted">
-        {timeSignature.numerator}/{timeSignature.denominator}
-      </span>
 
       <div className="spacer" />
 

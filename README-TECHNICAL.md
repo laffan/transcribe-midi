@@ -15,8 +15,9 @@ into an AUv3 app extension, so the plugin and the app are two thin shells over o
 
 ```
 crates/unplugged-core/       Domain model, sequencer, command layer, SMF, persistence,
-                             music theory, AI tool surface. Pure Rust. No Tauri, no I/O
-                             beyond the filesystem, no platform code.
+                             music theory, audition scheduling, AI tool surface. Pure
+                             Rust. No Tauri, no I/O beyond the filesystem, no platform
+                             code.
 crates/unplugged-audio/      Audio engine binding: Rust API, C ABI to Swift, null backend
                              off-Apple so tests run anywhere.
 crates/unplugged-midi/       External MIDI input (CoreMIDI via midir), null backend off-Apple.
@@ -93,11 +94,16 @@ you touch one substantially, split it as part of the change:
 | `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
 | `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
 | `crates/unplugged-core/src/command.rs` | ~840 | commands vs. history vs. tests |
-| `src/features/editor/Editor.tsx` | ~830 | extract keyboard handling + selection logic hooks |
 | `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
 | `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
 | `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
 | `src/features/editor/PianoRoll.tsx` | ~750 | grid math + interaction hooks out |
+
+`Editor.tsx` was on this list at ~830 lines and came off it under this rule: the toolbar
+work touched it substantially, so transport and capture state moved into `useTransport`
+and `useTranscription`, the panels became `Toolbar`, `TrackList` and `Inspector`, and what
+is left is the wiring between them. `TranscribeEditor.tsx` shed its geometry and its
+canvas drawing into `transcribeGeometry.ts` and `transcribeDraw.ts` the same way.
 
 ## Coding standards
 
@@ -221,11 +227,14 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 
 ## Editor shortcuts (for manual testing)
 
-`Space` play/stop · `R` record · `L` listen/transcribe · `⌘K` prompt · `⌘Z`/`⇧⌘Z`
+`Space` play/pause · `R` record · `L` listen/transcribe · `⌘K` prompt · `⌘Z`/`⇧⌘Z`
 undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q` quantize ·
 `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
 `W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
 click empty grid draws, drag marquee-selects.
+
+The listen overlay is a mode and takes the keyboard while it is up: `Space` there plays
+the take back rather than the project, and the editor's shortcuts are suspended.
 
 ## Working agreements
 

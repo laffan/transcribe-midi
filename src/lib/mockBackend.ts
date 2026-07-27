@@ -449,14 +449,14 @@ export const mockBackend = {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
   capture_waveform: (): WaveformPeaks => [],
-  capture_preview_play(): void {
-    fail("internal", "playing a take back needs the macOS or iOS build");
-  },
-  capture_preview_stop(): void {},
-  capture_preview_position: (): number | null => null,
   capture_set_notes(): number {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
+  capture_audition_play(): void {
+    fail("internal", "playing a take back needs the macOS or iOS build");
+  },
+  capture_audition_stop(): void {},
+  capture_audition_position: (): number | null => null,
 };
 
 const inputSettings: InputSettings = {

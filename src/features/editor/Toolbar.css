@@ -1,0 +1,217 @@
+/*
+ * The top bar. Three tracks so the transport and the clock sit in the middle of the
+ * window regardless of how long the project's name is — a centre that drifts with the
+ * title is a centre you have to look for.
+ */
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  min-width: 0;
+}
+
+.toolbar__side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.toolbar__side--end {
+  justify-content: flex-end;
+}
+
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.toolbar__centre {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.toolbar__project {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  min-width: 0;
+}
+
+.toolbar__dirty {
+  color: var(--accent);
+  margin-left: var(--space-1);
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+/*
+ * The build stamp. Quiet by default; amber when the build came from a modified working
+ * tree, because that is the case where the commit hash is a half-truth.
+ */
+.toolbar__build {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.toolbar__build--dirty {
+  color: var(--warning);
+}
+
+/* The transport is the one thing here that gets hit while looking somewhere else. */
+.btn--transport {
+  width: 34px;
+  height: 34px;
+  font-size: var(--text-md);
+}
+
+/* ----------------------------------------------------------------- clock -- */
+
+.clock {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  min-width: 0;
+}
+
+.clock__readout,
+.clock__tempo,
+.clock__sig {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+
+.clock__readout {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  min-width: 106px;
+}
+
+.clock__label {
+  font-size: 9px;
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.clock__value {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--text-0);
+  line-height: 1.2;
+}
+
+.clock__value--quiet {
+  font-size: var(--text-md);
+  color: var(--text-1);
+}
+
+.clock__stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.clock__bpm {
+  width: 46px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--text-0);
+  text-align: center;
+}
+
+.clock__bpm:focus {
+  outline: none;
+  color: var(--accent);
+}
+
+/* Number spinners steal width and are useless at this size. */
+.clock__bpm::-webkit-outer-spin-button,
+.clock__bpm::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.clock__nudge {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.clock__nudge:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.clock__nudge:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.clock__countin {
+  align-self: center;
+  font-size: var(--text-xs);
+  color: var(--warning);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- narrow -- */
+
+@media (max-width: 1100px) {
+  /* The project's name is the first thing that can go: it is also in the picker, and
+     the toolbar's job is the controls. */
+  .toolbar__project {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .toolbar {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .toolbar__build,
+  .clock__sig {
+    display: none;
+  }
+
+  .clock__readout {
+    min-width: 88px;
+  }
+
+  .clock__value {
+    font-size: var(--text-md);
+  }
+}

@@ -1,12 +1,14 @@
 /*
- * Editor chrome. The layout is a fixed grid: title bar, a flexible main row split into
- * the wide left column and the narrow inspector, then a fixed bottom bar. The console
- * is an extra row that appears only when toggled.
+ * Editor chrome. The layout is a grid: the toolbar, a flexible main row split into the
+ * wide left column and the narrow inspector, then the bottom bar. The console is an
+ * extra row that appears only when toggled, and the inspector and the keyboard are rows
+ * and columns that the toolbar's toggles remove entirely rather than hide — a hidden
+ * panel that still holds its space is not hidden.
  */
 
 .editor {
   display: grid;
-  grid-template-rows: var(--h-titlebar) 1fr auto;
+  grid-template-rows: auto 1fr auto;
   height: 100%;
   background: var(--bg-0);
   overflow: hidden;
@@ -25,35 +27,7 @@
 }
 
 .editor--console {
-  grid-template-rows: var(--h-titlebar) 1fr auto var(--h-console);
-}
-
-/* ------------------------------------------------------------- titlebar -- */
-
-.editor__titlebar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-1);
-  min-width: 0;
-}
-
-.editor__title {
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  min-width: 0;
-}
-
-.editor__stat {
-  font-size: var(--text-xs);
-  color: var(--text-2);
-}
-
-.btn--active {
-  background: var(--accent-muted);
-  color: var(--accent);
+  grid-template-rows: auto 1fr auto var(--h-console);
 }
 
 /* ----------------------------------------------------------------- main -- */
@@ -63,6 +37,10 @@
   grid-template-columns: 1fr var(--w-inspector);
   min-height: 0;
   min-width: 0;
+}
+
+.editor--no-history .editor__main {
+  grid-template-columns: 1fr;
 }
 
 .editor__tracks {
@@ -102,13 +80,6 @@
   /* The first-run doors float over the grid rather than replacing it, so drawing a note
      by hand stays one click away. */
   position: relative;
-}
-
-.editor__dirty {
-  color: var(--accent);
-  margin-left: var(--space-1);
-  font-size: var(--text-lg);
-  line-height: 1;
 }
 
 .inspector__shortcuts {
@@ -231,10 +202,15 @@
 
 .editor__bottom {
   display: grid;
-  grid-template-rows: var(--h-transport) var(--h-keyboard);
+  grid-template-rows: auto var(--h-transport) var(--h-keyboard);
   border-top: 1px solid var(--border);
   background: var(--bg-1);
   flex-shrink: 0;
+}
+
+/* An explicit row exists whether or not anything is in it, so the row goes too. */
+.editor--no-keyboard .editor__bottom {
+  grid-template-rows: auto var(--h-transport);
 }
 
 .editor__transport,
@@ -457,10 +433,6 @@
   .tracklist__remove {
     opacity: 1;
   }
-
-  .editor__stat {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {
@@ -483,12 +455,4 @@
 
 .inspector__shortcuts[open] > summary {
   margin-bottom: var(--space-2);
-}
-
-/*
- * The build stamp. Quiet by default; amber when the build came from a modified working
- * tree, because that is the case where the commit hash is a half-truth.
- */
-.editor__build--dirty {
-  color: var(--warning);
 }

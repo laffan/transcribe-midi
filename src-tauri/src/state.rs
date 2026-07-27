@@ -111,6 +111,8 @@ pub struct AppState {
     pub mic: Box<dyn CaptureBackend>,
     /// Plays a captured take back. You cannot judge a transcription you have not heard.
     pub preview: Box<dyn PreviewBackend>,
+    /// Plays the *notes* a take became, which is the thing actually being judged.
+    pub audition: crate::audition::Audition,
     pub capture: crate::transcribe::SharedCapture,
     /// The AI proposal awaiting accept or reject.
     ///
@@ -131,6 +133,7 @@ impl AppState {
             ai_prefs: Mutex::new(crate::ai::AiPreferences::load(&app_data_dir)),
             mic: unplugged_audio::new_capture(),
             preview: unplugged_audio::new_preview(),
+            audition: Default::default(),
             capture: Mutex::new(Default::default()),
             pending_ai: Mutex::new(None),
             data_dir: app_data_dir,

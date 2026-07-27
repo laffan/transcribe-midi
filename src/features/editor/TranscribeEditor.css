@@ -1,48 +1,7 @@
 /*
- * Full-bleed over the editor. The waveform needs width to be worth looking at, and
- * fine-tuning a transcription is a mode rather than a panel — you are doing that or you
- * are doing something else.
+ * The review stage inside the listen overlay. The frame — position, header, footer bar —
+ * belongs to ListenOverlay.css; what is here is only the canvas and its controls.
  */
-.tedit {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  background: var(--bg-0);
-  min-width: 0;
-}
-
-.tedit__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-1);
-  min-width: 0;
-}
-
-.tedit__title {
-  margin: 0;
-  font-size: var(--text-md);
-  font-weight: 600;
-}
-
-.tedit__stat {
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.tedit__canvas {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg-1);
-}
 
 .tedit__canvas canvas {
   display: block;
@@ -51,13 +10,21 @@
 }
 
 .tedit__controls {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.tedit__row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--border);
-  background: var(--bg-1);
+  min-width: 0;
+}
+
+.tedit__row .field__hint {
+  flex: 1 1 240px;
   min-width: 0;
 }
 
@@ -82,7 +49,8 @@
   cursor: pointer;
 }
 
-.tedit__controls .field__hint {
-  flex: 1 1 220px;
-  min-width: 0;
+@media (max-width: 720px) {
+  .tedit__row .field__hint {
+    display: none;
+  }
 }

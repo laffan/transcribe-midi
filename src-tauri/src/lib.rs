@@ -1,4 +1,5 @@
 mod ai;
+mod audition;
 mod commands;
 mod editor;
 mod error;
@@ -200,11 +201,11 @@ pub fn run() {
             transcribe::capture_load_file,
             transcribe::capture_waveform,
             transcribe::capture_set_notes,
-            transcribe::capture_preview_play,
-            transcribe::capture_preview_stop,
-            transcribe::capture_preview_position,
             transcribe::capture_accept,
             transcribe::capture_cancel,
+            audition::capture_audition_play,
+            audition::capture_audition_stop,
+            audition::capture_audition_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Unplugged");

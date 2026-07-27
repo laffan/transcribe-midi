@@ -12,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { mockBackend, mockTransport } from "./mockBackend";
 import type {
   AiModelsResponse,
+  AuditionSource,
   CaptureStatus,
   TranscriptionPreview,
   AiProposal,
@@ -196,12 +197,18 @@ export const api = {
   captureWaveform: (fromSeconds: number, toSeconds: number, buckets: number) =>
     call<WaveformPeaks>("capture_waveform", { fromSeconds, toSeconds, buckets }),
   captureSetNotes: (notes: Note[]) => call<number>("capture_set_notes", { notes }),
-  capturePreviewPlay: (fromSeconds: number) =>
-    call<void>("capture_preview_play", { fromSeconds }),
-  capturePreviewStop: () => call<void>("capture_preview_stop"),
-  capturePreviewPosition: () => call<number | null>("capture_preview_position"),
   captureAccept: () => call<EditorState>("capture_accept"),
   captureCancel: () => call<void>("capture_cancel"),
+
+  // --- Hearing a take back --------------------------------------------------
+  //
+  // One play/stop for both sources. Which of them makes the sound is Rust's business;
+  // the position that comes back is the one to draw a playhead with either way.
+
+  auditionPlay: (fromSeconds: number, source: AuditionSource) =>
+    call<void>("capture_audition_play", { fromSeconds, source }),
+  auditionStop: () => call<void>("capture_audition_stop"),
+  auditionPosition: () => call<number | null>("capture_audition_position"),
 
   copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
   shareFile: (path: string) => call<void>("share_file", { path }),

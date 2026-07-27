@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, errorMessage, isCommandError, onLiveNote, onPlayhead } from "../../lib/api";
+import { api, errorMessage, onLiveNote } from "../../lib/api";
 import { logger } from "../../lib/console";
 import type {
   BuildInfo,
@@ -8,20 +8,26 @@ import type {
   EditRequest,
   PlatformCapabilities,
   ProjectManifest,
+  TranscriptionPreview,
 } from "../../lib/types";
-import { InterchangeBar } from "./InterchangeBar";
-import { HistoryStrip } from "./HistoryStrip";
-import { ListeningBar } from "./ListeningBar";
-import { type Pending, previewDiff } from "./pending";
+import { ConsolePanel } from "./ConsolePanel";
+import { importSmfFile } from "./importSmf";
+import { Inspector } from "./Inspector";
+import { ListenCapture } from "./ListenCapture";
+import { ListenOverlay } from "./ListenOverlay";
+import { OnScreenKeyboard } from "./OnScreenKeyboard";
+import { previewDiff } from "./pending";
+import { PianoRoll } from "./PianoRoll";
 import { PromptBar } from "./PromptBar";
 import { ReviewBar } from "./ReviewBar";
 import { StartHere } from "./StartHere";
+import { noteAt } from "./timeFormat";
+import { Toolbar } from "./Toolbar";
+import { TrackList } from "./TrackList";
 import { TranscribeEditor } from "./TranscribeEditor";
-import { gridTicks, TranscribeSettings, type TranscribeOptions } from "./TranscribeSettings";
-import { ConsolePanel } from "./ConsolePanel";
-import { OnScreenKeyboard } from "./OnScreenKeyboard";
-import { PianoRoll } from "./PianoRoll";
 import { Transport } from "./Transport";
+import { useTranscription } from "./useTranscription";
+import { useTransport } from "./useTransport";
 import "./Editor.css";
 
 interface EditorProps {
@@ -37,41 +43,44 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [selectedTrack, setSelectedTrack] = useState(0);
   const [selection, setSelection] = useState<number[]>([]);
-  const [playing, setPlaying] = useState(false);
-  const [positionTicks, setPositionTicks] = useState(0);
-  const [tempo, setTempo] = useState(120);
-  const [showConsole, setShowConsole] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const [inCountIn, setInCountIn] = useState(false);
-  const [loopRegion, setLoopRegion] = useState<[number, number] | null>(null);
-  const [metronome, setMetronome] = useState(false);
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
+  const [importing, setImporting] = useState(false);
   /** Pitches currently sounding from live input, for keyboard feedback. */
   const [liveNotes, setLiveNotes] = useState<Set<number>>(new Set());
-  /** Mirror of the Rust-side setting, for display only — Rust applies it. */
-  const [keyboardVelocity, setKeyboardVelocity] = useState(100);
-  /**
-   * Whatever produced notes and is waiting on a decision — an AI edit or a
-   * transcription. One slot, because they are one interaction and only one can be
-   * outstanding at a time.
-   */
-  const [pending, setPending] = useState<Pending>(null);
-  const [listening, setListening] = useState(false);
-  const [listenLevel, setListenLevel] = useState(0);
-  const [fineTuning, setFineTuning] = useState(false);
-  const [transcribeOptions, setTranscribeOptions] = useState<TranscribeOptions>({
-    useProjectTempo: true,
-    gridDivisor: 4,
-  });
+
+  // What the toolbar's toggles show and hide. Both start on: the app should introduce
+  // itself complete, and hiding a panel is a decision the user makes about their screen.
+  const [showKeyboard, setShowKeyboard] = useState(true);
+  const [showHistory, setShowHistory] = useState(true);
+  const [showConsole, setShowConsole] = useState(false);
+
   /**
    * Which build this is.
    *
-   * In the titlebar rather than only in Settings because once this runs as a plugin, this
+   * In the toolbar rather than only in Settings because once this runs as a plugin, this
    * window is the entire UI — and "am I looking at the fix I just built?" is the question
    * a cached Audio Unit scan makes impossible to answer any other way.
    */
   const [build, setBuild] = useState<BuildInfo | null>(null);
+
+  const transport = useTransport({
+    manifest,
+    settingsRevision,
+    onRecorded: setEditor,
+  });
+
+  const applied = useCallback((state: EditorState) => {
+    setEditor(state);
+    setSelection(state.affected);
+    setSelectedTrack(state.affected_track);
+  }, []);
+
+  const listen = useTranscription({
+    selectedTrack,
+    ppq: manifest?.ppq ?? 480,
+    onApplied: applied,
+  });
 
   // -- load ----------------------------------------------------------------
 
@@ -86,7 +95,6 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         ]);
         if (cancelled) return;
         setManifest(project.manifest);
-        setTempo(project.manifest.tempo_bpm);
         setEditor(state);
         setLoadError(null);
       } catch (error) {
@@ -102,29 +110,6 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
       void api.closeProject().catch(() => {});
     };
   }, [projectId]);
-
-  // -- playhead ------------------------------------------------------------
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-
-    onPlayhead((event) => {
-      setPositionTicks(event.position_ticks);
-      setPlaying(event.playing);
-      setInCountIn(event.in_count_in);
-    })
-      .then((fn) => {
-        if (cancelled) fn();
-        else unlisten = fn;
-      })
-      .catch((error) => logger.error("Could not subscribe to the playhead", errorMessage(error)));
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
 
   // Live-input feedback. Purely cosmetic — the note has already sounded and, if the
   // transport is recording, been captured in Rust by the time this arrives. It fires
@@ -157,16 +142,6 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     api.platformCapabilities().then(setCapabilities).catch(() => setCapabilities(null));
     api.buildInfo().then(setBuild).catch(() => setBuild(null));
   }, []);
-
-  useEffect(() => {
-    api
-      .inputSettings()
-      .then((settings) => {
-        setKeyboardVelocity(settings.keyboard_velocity);
-        setMetronome(settings.metronome);
-      })
-      .catch(() => {});
-  }, [settingsRevision]);
 
   // -- editing -------------------------------------------------------------
 
@@ -209,192 +184,35 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     }
   }, []);
 
-  // -- transport -----------------------------------------------------------
-
-  const play = useCallback(async () => {
-    try {
-      const state = await api.transportPlay();
-      setPlaying(state.playing);
-    } catch (error) {
-      logger.error("Could not start playback", errorMessage(error));
-    }
+  const doImport = useCallback(async () => {
+    setImporting(true);
+    const state = await importSmfFile();
+    setImporting(false);
+    if (!state) return;
+    setEditor(state);
+    setSelection([]);
   }, []);
-
-  const stop = useCallback(async () => {
-    try {
-      const state = await api.transportStop();
-      setPlaying(state.playing);
-    } catch (error) {
-      logger.error("Could not stop playback", errorMessage(error));
-    }
-  }, []);
-
-  const seek = useCallback(async (tick: number) => {
-    try {
-      const state = await api.transportSeek(tick);
-      setPositionTicks(state.position_ticks);
-    } catch (error) {
-      logger.error("Could not move the playhead", errorMessage(error));
-    }
-  }, []);
-
-  const toggleRecord = useCallback(async () => {
-    try {
-      if (recording) {
-        setEditor(await api.recordStop());
-        setRecording(false);
-        logger.info("Take committed — undo it like any other edit");
-      } else {
-        const result = await api.recordStart();
-        setRecording(result.recording);
-        if (result.count_in_ticks > 0) logger.info("Counting in…");
-      }
-    } catch (error) {
-      setRecording(false);
-      logger.error("Recording failed", errorMessage(error));
-    }
-  }, [recording]);
-
-  const toggleLoop = useCallback(async () => {
-    // Default to two bars from the playhead: a loop has to come from somewhere, and
-    // dragging brackets before there is anything to loop is more ceremony than it is
-    // worth. Once set, the region is visible in the ruler.
-    const next: [number, number] | null = loopRegion
-      ? null
-      : (() => {
-          const bar = (manifest!.ppq * 4 * manifest!.time_signature.numerator) /
-            manifest!.time_signature.denominator;
-          const start = Math.floor(positionTicks / bar) * bar;
-          return [start, start + bar * 2];
-        })();
-
-    try {
-      const state = await api.setLoopRegion(next);
-      setLoopRegion(state.loop_region);
-    } catch (error) {
-      logger.error("Could not set the loop", errorMessage(error));
-    }
-  }, [loopRegion, manifest, positionTicks]);
-
-  const toggleMetronome = useCallback(async () => {
-    const next = !metronome;
-    setMetronome(next);
-    try {
-      await api.setMetronome(next);
-    } catch (error) {
-      setMetronome(!next);
-      logger.error("Could not toggle the metronome", errorMessage(error));
-    }
-  }, [metronome]);
 
   // Keep the armed track in step with the selected one, so recording lands where the
   // user is looking rather than on whichever track was armed last.
   useEffect(() => {
-    if (recording) return;
+    if (transport.recording) return;
     api.setArmedTrack(selectedTrack).catch(() => {});
-  }, [selectedTrack, recording]);
-
-  // -- audio to MIDI -------------------------------------------------------
-
-  const discardPending = useCallback(async () => {
-    const current = pending;
-    setPending(null);
-    setFineTuning(false);
-    if (current?.kind === "ai") await api.aiReject().catch(() => {});
-    if (current?.kind === "transcription") await api.captureCancel().catch(() => {});
-  }, [pending]);
-
-  const applyPending = useCallback(async () => {
-    if (!pending) return;
-    try {
-      const state = pending.kind === "ai" ? await api.aiAccept() : await api.captureAccept();
-      setEditor(state);
-      setSelection(state.affected);
-      setSelectedTrack(state.affected_track);
-      setPending(null);
-      setFineTuning(false);
-      logger.info("Applied — undo it like any other edit");
-    } catch (error) {
-      logger.error("Could not apply that", errorMessage(error));
-    }
-  }, [pending]);
-
-  const toggleListen = useCallback(async () => {
-    if (listening) {
-      setListening(false);
-      try {
-        const preview = await api.captureTranscribe(
-          selectedTrack,
-          transcribeOptions.useProjectTempo,
-          gridTicks(transcribeOptions, manifest?.ppq ?? 480),
-        );
-        setPending({ kind: "transcription", preview });
-        // Open the waveform straight away. For an AI edit the diff on the roll is the
-        // review; for a take, the waveform is — you cannot judge a transcription against
-        // a grid, only against the sound it came from.
-        setFineTuning(preview.notes.length > 0);
-        if (preview.warning) logger.warn(preview.warning);
-        else logger.info(`Transcribed ${preview.notes.length} notes`);
-      } catch (error) {
-        logger.error("Transcription failed", errorMessage(error));
-      }
-      return;
-    }
-
-    await discardPending();
-    try {
-      const status = await api.captureStart();
-      setListening(status.recording);
-      logger.info("Listening — play or hum one note at a time");
-    } catch (error) {
-      if (isCommandError(error) && error.code === "microphone_denied") {
-        logger.error(
-          "Microphone access is off",
-          "Allow it in System Settings → Privacy & Security, then try again.",
-        );
-      } else {
-        logger.error("Could not start listening", errorMessage(error));
-      }
-    }
-  }, [listening, selectedTrack, transcribeOptions, manifest?.ppq, discardPending]);
-
-  // Poll the level while listening. Nothing here is on a timing path — samples are placed
-  // by their position in the buffer, not by when this runs.
-  useEffect(() => {
-    if (!listening) return;
-    const timer = window.setInterval(() => {
-      api
-        .capturePoll()
-        .then((status) => setListenLevel(status.level))
-        .catch(() => {});
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, [listening]);
-
-  // Never leave the microphone running because the editor closed.
-  useEffect(() => () => void api.captureCancel().catch(() => {}), []);
-
-  // A pending result is bound to one track's notes. Switching tracks makes it
-  // meaningless, so it goes rather than sitting there looking applicable.
-  useEffect(() => {
-    setPending((current) => {
-      if (!current) return null;
-      if (current.kind === "ai") void api.aiReject().catch(() => {});
-      else void api.captureCancel().catch(() => {});
-      return null;
-    });
-    setFineTuning(false);
-  }, [selectedTrack]);
+  }, [selectedTrack, transport.recording]);
 
   // -- global shortcuts ----------------------------------------------------
 
-  const playingRef = useRef(playing);
-  playingRef.current = playing;
   // Held in refs so the key handler does not need re-binding on every state change.
-  const toggleRecordRef = useRef(toggleRecord);
-  toggleRecordRef.current = toggleRecord;
-  const toggleListenRef = useRef(toggleListen);
-  toggleListenRef.current = toggleListen;
+  const playingRef = useRef(transport.playing);
+  playingRef.current = transport.playing;
+  const toggleRecordRef = useRef(transport.toggleRecord);
+  toggleRecordRef.current = transport.toggleRecord;
+  const toggleListenRef = useRef(listen.toggleListen);
+  toggleListenRef.current = listen.toggleListen;
+  // The listen overlay is a mode: while it is up, Space belongs to it and Record and
+  // Listen would both act on something the user cannot see.
+  const overlayRef = useRef(listen.stage !== null);
+  overlayRef.current = listen.stage !== null;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -402,12 +220,13 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
+      if (overlayRef.current) return;
 
       const mod = event.metaKey || event.ctrlKey;
 
       if (event.code === "Space") {
         event.preventDefault();
-        void (playingRef.current ? stop() : play());
+        void (playingRef.current ? transport.pause() : transport.play());
         return;
       }
 
@@ -433,13 +252,13 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
       // it is the peer of Record in this app rather than something behind a panel.
       if (!mod && event.key.toLowerCase() === "l") {
         event.preventDefault();
-        void toggleListenRef.current();
+        toggleListenRef.current();
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [play, stop, doUndo, doRedo, doSave]);
+  }, [transport.play, transport.pause, doUndo, doRedo, doSave]);
 
   // -- live notes ----------------------------------------------------------
 
@@ -473,7 +292,13 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     [noteOn, noteOff],
   );
 
-  const rollPreview = previewDiff(pending);
+  const rollPreview = previewDiff(listen.pending);
+
+  /** What the clock shows in note mode: the note under the playhead, if there is one. */
+  const notePitch = useMemo(
+    () => (track ? (noteAt(track.notes, transport.positionTicks)?.pitch ?? null) : null),
+    [track, transport.positionTicks],
+  );
 
   // -- render --------------------------------------------------------------
 
@@ -527,89 +352,56 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     }
   }
 
+  const layout = [
+    "editor",
+    showConsole ? "editor--console" : "",
+    showKeyboard ? "" : "editor--no-keyboard",
+    showHistory ? "" : "editor--no-history",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`editor ${showConsole ? "editor--console" : ""}`}>
-      <header className="editor__titlebar">
-        <button className="btn btn--ghost btn--icon" onClick={onOpenSettings} aria-label="Settings" title="Settings">
-          ⚙
-        </button>
-        <button className="btn btn--ghost" onClick={onClose}>
-          ← Projects
-        </button>
-
-        <div className="editor__title truncate">
-          {manifest.name}
-          {editor.dirty && <span className="editor__dirty" aria-label="Unsaved changes">•</span>}
-        </div>
-
-        <div className="spacer" />
-
-        <span className="editor__stat mono">{manifest.ppq} PPQ</span>
-        {build && (
-          <span
-            className={`editor__stat mono ${build.dirty ? "editor__build--dirty" : ""}`}
-            title={`${build.version} · ${build.commit}${build.dirty ? " (modified)" : ""} · ${build.profile} · built ${build.built_at}`}
-          >
-            {build.version} {build.commit}
-            {build.dirty ? "+" : ""}
-          </span>
-        )}
-        <button
-          className={`btn btn--ghost ${showConsole ? "btn--active" : ""}`}
-          onClick={() => setShowConsole((v) => !v)}
-          aria-pressed={showConsole}
-        >
-          Console
-        </button>
-      </header>
+    <div className={layout}>
+      <Toolbar
+        projectName={manifest.name}
+        dirty={editor.dirty}
+        build={build}
+        onBack={onClose}
+        showKeyboard={showKeyboard}
+        onToggleKeyboard={() => setShowKeyboard((v) => !v)}
+        showHistory={showHistory}
+        onToggleHistory={() => setShowHistory((v) => !v)}
+        playing={transport.playing}
+        onPlay={() => void transport.play()}
+        onPause={() => void transport.pause()}
+        onStop={() => void transport.stop()}
+        positionTicks={transport.positionTicks}
+        ppq={manifest.ppq}
+        timeSignature={manifest.time_signature}
+        tempoBpm={transport.tempoBpm}
+        inCountIn={transport.inCountIn}
+        notePitch={notePitch}
+        onTempoChange={transport.changeTempo}
+        onOpenSettings={onOpenSettings}
+        showConsole={showConsole}
+        onToggleConsole={() => setShowConsole((v) => !v)}
+        onImport={() => void doImport()}
+        importing={importing}
+      />
 
       <main className="editor__main">
         <section className="editor__tracks">
-          <div className="editor__panel-head">
-            <h2 className="editor__panel-title">Tracks</h2>
-            <button className="btn btn--ghost" onClick={addTrack}>
-              + Add
-            </button>
-          </div>
-
-          <ul className="tracklist">
-            {editor.tracks.map((t, index) => (
-              <li key={t.id}>
-                <div
-                  className={`tracklist__item ${index === selectedTrack ? "tracklist__item--selected" : ""}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setSelectedTrack(index);
-                    setSelection([]);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setSelectedTrack(index);
-                      setSelection([]);
-                    }
-                  }}
-                >
-                  <span className="tracklist__swatch" style={{ background: t.color }} />
-                  <span className="tracklist__name truncate">{t.name}</span>
-                  <span className="tracklist__count mono muted">{t.notes.length}</span>
-                  {editor.tracks.length > 1 && (
-                    <button
-                      className="btn btn--ghost btn--icon tracklist__remove"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void deleteTrack(t.id);
-                      }}
-                      aria-label={`Delete ${t.name}`}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <TrackList
+            tracks={editor.tracks}
+            selected={selectedTrack}
+            onSelect={(index) => {
+              setSelectedTrack(index);
+              setSelection([]);
+            }}
+            onAdd={() => void addTrack()}
+            onDelete={(trackId) => void deleteTrack(trackId)}
+          />
 
           <div className="editor__roll">
             {track ? (
@@ -622,18 +414,18 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                 onSelectionChange={setSelection}
                 onEdit={applyEdit}
                 onPreviewNote={previewNote}
-                playheadTicks={positionTicks}
-                onScrub={seek}
-                loopRegion={loopRegion}
+                playheadTicks={transport.positionTicks}
+                onScrub={(tick) => void transport.seek(tick)}
+                loopRegion={transport.loopRegion}
                 preview={rollPreview}
               />
             ) : (
               <p className="muted">No track selected.</p>
             )}
 
-            {editor.tracks.every((t) => t.notes.length === 0) && !pending && (
+            {editor.tracks.every((t) => t.notes.length === 0) && !listen.pending && (
               <StartHere
-                onListen={() => void toggleListen()}
+                onListen={listen.toggleListen}
                 onDescribe={() =>
                   document.querySelector<HTMLTextAreaElement>(".promptbar__input")?.focus()
                 }
@@ -642,122 +434,31 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
           </div>
         </section>
 
-        <aside className="editor__inspector">
-          {/* Titled "History" rather than "Track Inspector": the chain of transformations
-              is what leads this panel now, and it is not track-scoped — the undo stack
-              spans the project. */}
-          <div className="editor__panel-head">
-            <h2 className="editor__panel-title">History</h2>
-          </div>
-
-          {track ? (
-            <div className="inspector">
-              <HistoryStrip
-                history={editor.history}
-                redoHistory={editor.redo_history}
-                onUndo={doUndo}
-                onRedo={doRedo}
-              />
-
-              <hr className="inspector__rule" />
-
-              <div className="field">
-                <span className="field__label">Track</span>
-                <div className="inspector__value">{track.name}</div>
-              </div>
-
-              <div className="inspector__grid">
-                <div className="field">
-                  <span className="field__label">Channel</span>
-                  <div className="inspector__value mono">{track.channel + 1}</div>
-                </div>
-                <div className="field">
-                  <span className="field__label">Notes</span>
-                  <div className="inspector__value mono">{track.notes.length}</div>
-                </div>
-              </div>
-
-              <div className="field">
-                <span className="field__label">Selected</span>
-                <div className="inspector__value mono">{selection.length}</div>
-              </div>
-
-              <div className="field">
-                <span className="field__label">Instrument</span>
-                <div className="inspector__value">Built-in sampler</div>
-                <span className="field__hint">AUv3 instruments arrive in Phase 9.</span>
-              </div>
-
-              <hr className="inspector__rule" />
-
-              <details className="inspector__shortcuts">
-                <summary className="field__label">Shortcuts</summary>
-                <dl className="shortcuts">
-                  <dt className="mono">Space</dt><dd>Play / stop</dd>
-                  <dt className="mono">⌘Z / ⇧⌘Z</dt><dd>Undo / redo</dd>
-                  <dt className="mono">⌘A</dt><dd>Select all</dd>
-                  <dt className="mono">⌘C / ⌘X / ⌘V</dt><dd>Copy / cut / paste</dd>
-                  <dt className="mono">⌘Q</dt><dd>Quantize selection</dd>
-                  <dt className="mono">⌫</dt><dd>Delete selection</dd>
-                  <dt className="mono">↑ ↓ ← →</dt><dd>Nudge (⇧ for octave / bar)</dd>
-                  <dt className="mono">⌥click</dt><dd>Delete note</dd>
-                  <dt className="mono">A–L, W/E/T/Y/U</dt><dd>Play keys</dd>
-                  <dt className="mono">Z / X</dt><dd>Octave down / up</dd>
-                  <dt className="mono">L</dt><dd>Listen (audio → MIDI)</dd>
-                  <dt className="mono">⌘K</dt><dd>Focus the prompt</dd>
-                </dl>
-              </details>
-
-              <hr className="inspector__rule" />
-
-              <TranscribeSettings
-                trackIndex={selectedTrack}
-                ppq={manifest.ppq}
-                options={transcribeOptions}
-                disabled={listening}
-                onChange={setTranscribeOptions}
-                onResult={(preview) => {
-                  setPending({ kind: "transcription", preview });
-                  setFineTuning(preview.notes.length > 0);
-                }}
-              />
-
-              <hr className="inspector__rule" />
-
-              <InterchangeBar
-                trackIndex={selectedTrack}
-                trackName={track.name}
-                capabilities={capabilities}
-                onImported={(state) => {
-                  setEditor(state);
-                  setSelection([]);
-                }}
-              />
-
-            </div>
-          ) : (
-            <p className="muted" style={{ padding: "var(--space-4)" }}>
-              No track selected.
-            </p>
-          )}
-        </aside>
+        {showHistory && (
+          <Inspector
+            editor={editor}
+            track={track}
+            trackIndex={selectedTrack}
+            selectionCount={selection.length}
+            ppq={manifest.ppq}
+            listening={listen.listening}
+            transcribeOptions={listen.options}
+            capabilities={capabilities}
+            onUndo={doUndo}
+            onRedo={doRedo}
+            onTranscribeOptionsChange={listen.setOptions}
+            onTranscribed={listen.takeResult}
+          />
+        )}
       </main>
 
       <footer className="editor__bottom">
-        {listening ? (
-          <ListeningBar
-            onStop={() => void toggleListen()}
-            onCancel={() => {
-              setListening(false);
-              void api.captureCancel().catch(() => {});
-            }}
-          />
-        ) : pending ? (
+        {listen.pending ? (
           <ReviewBar
-            pending={pending}
-            onApply={() => void applyPending()}
-            onDiscard={() => void discardPending()}
-            onFineTune={() => setFineTuning(true)}
+            pending={listen.pending}
+            onApply={() => void listen.applyPending()}
+            onDiscard={() => void listen.discardPending()}
+            onFineTune={listen.openReview}
           />
         ) : (
           <PromptBar
@@ -765,69 +466,86 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
             trackName={track?.name ?? "this track"}
             selection={selection}
             settingsRevision={settingsRevision}
-            disabled={listening}
-            onProposal={(proposal) => setPending({ kind: "ai", proposal })}
+            disabled={listen.listening}
+            onProposal={(proposal) => listen.setPending({ kind: "ai", proposal })}
             onOpenSettings={onOpenSettings}
           />
         )}
 
         <div className="editor__transport">
           <Transport
-            playing={playing}
-            recording={recording}
-            inCountIn={inCountIn}
-            loopRegion={loopRegion}
-            metronome={metronome}
-            positionTicks={positionTicks}
-            tempoBpm={tempo}
-            ppq={manifest.ppq}
-            timeSignature={manifest.time_signature}
+            recording={transport.recording}
+            loopRegion={transport.loopRegion}
+            metronome={transport.metronome}
             dirty={editor.dirty}
             canUndo={editor.can_undo}
             canRedo={editor.can_redo}
             undoLabel={editor.undo_label}
             redoLabel={editor.redo_label}
-            onPlay={play}
-            onStop={stop}
-            onRecord={toggleRecord}
-            listening={listening}
-            listenLevel={listenLevel}
-            onListen={() => void toggleListen()}
-            onToggleLoop={toggleLoop}
-            onToggleMetronome={toggleMetronome}
-            onReturnToZero={() => void seek(0)}
-            onTempoChange={(bpm) => {
-              setTempo(bpm);
-              void api.setTempo(bpm).catch((e) => logger.error("Tempo change failed", errorMessage(e)));
-            }}
+            onRecord={() => void transport.toggleRecord()}
+            listening={listen.listening}
+            onListen={listen.toggleListen}
+            onToggleLoop={() => void transport.toggleLoop()}
+            onToggleMetronome={() => void transport.toggleMetronome()}
             onUndo={doUndo}
             onRedo={doRedo}
             onSave={doSave}
             onPanic={() => void api.panic().catch(() => {})}
           />
         </div>
-        <div className="editor__keyboard">
-          <OnScreenKeyboard
-            velocity={keyboardVelocity}
-            channel={track?.channel ?? 0}
-            onNoteOn={noteOn}
-            onNoteOff={noteOff}
-            externalNotes={liveNotes}
-          />
-        </div>
+
+        {showKeyboard && (
+          <div className="editor__keyboard">
+            <OnScreenKeyboard
+              velocity={transport.keyboardVelocity}
+              channel={track?.channel ?? 0}
+              onNoteOn={noteOn}
+              onNoteOff={noteOff}
+              externalNotes={liveNotes}
+            />
+          </div>
+        )}
       </footer>
 
       {showConsole && <ConsolePanel onClose={() => setShowConsole(false)} />}
 
-      {fineTuning && pending?.kind === "transcription" && (
-        <TranscribeEditor
-          preview={pending.preview}
-          ppq={manifest.ppq}
-          onChange={(preview) => setPending({ kind: "transcription", preview })}
-          onApply={() => void applyPending()}
-          onClose={() => setFineTuning(false)}
-        />
+      {listen.stage === "capture" && (
+        <ListenOverlay
+          title="Sing, hum, whistle or play — one note at a time"
+          onClose={listen.cancelListen}
+          closeLabel="Cancel this take"
+        >
+          <ListenCapture
+            onStop={() => void listen.stopAndTranscribe()}
+            onCancel={listen.cancelListen}
+          />
+        </ListenOverlay>
+      )}
+
+      {listen.stage === "review" && listen.pending?.kind === "transcription" && (
+        <ListenOverlay
+          title="What came back"
+          stat={statOf(listen.pending.preview)}
+          onClose={listen.closeReview}
+          closeLabel="Close — the take stays in the review bar"
+        >
+          <TranscribeEditor
+            preview={listen.pending.preview}
+            ppq={manifest.ppq}
+            onChange={listen.replacePreview}
+            onApply={() => void listen.applyPending()}
+            onDiscard={() => void listen.discardPending()}
+          />
+        </ListenOverlay>
       )}
     </div>
   );
+}
+
+/** The numbers worth having in the overlay's header, plus any warning about them. */
+function statOf(preview: TranscriptionPreview): string {
+  const head =
+    `${preview.notes.length} notes · ${preview.duration_seconds.toFixed(1)}s · ` +
+    `${preview.tempo_bpm.toFixed(0)} bpm${preview.tempo_estimated ? " (estimated)" : ""}`;
+  return preview.warning ? `${head} — ${preview.warning}` : head;
 }
