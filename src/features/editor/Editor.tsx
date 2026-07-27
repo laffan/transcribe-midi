@@ -15,6 +15,7 @@ import { importSmfFile } from "./importSmf";
 import { Inspector } from "./Inspector";
 import { ListenCapture } from "./ListenCapture";
 import { ListenOverlay } from "./ListenOverlay";
+import { ListenProgress } from "./ListenProgress";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
 import { previewDiff } from "./pending";
 import { PianoRoll } from "./PianoRoll";
@@ -54,6 +55,16 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
   const [showKeyboard, setShowKeyboard] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
   const [showConsole, setShowConsole] = useState(false);
+
+  /**
+   * Whether the computer keyboard is playing notes instead of driving the editor.
+   *
+   * A mode rather than a coexistence, because the two mappings genuinely collide: `L` is
+   * Listen and it is also D, `J` is Join and it is also B, `S` is a white key. Anything
+   * clever here would mean one of them silently losing, and which one would depend on
+   * where the focus happened to be.
+   */
+  const [typing, setTyping] = useState(false);
 
   /**
    * Which build this is.
@@ -210,9 +221,17 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
   const toggleListenRef = useRef(listen.toggleListen);
   toggleListenRef.current = listen.toggleListen;
   // The listen overlay is a mode: while it is up, Space belongs to it and Record and
-  // Listen would both act on something the user cannot see.
+  // Listen would both act on something the user cannot see. Typing mode is the other
+  // one — the letters belong to the on-screen keys while it is on.
   const overlayRef = useRef(listen.stage !== null);
   overlayRef.current = listen.stage !== null;
+  const typingRef = useRef(typing);
+  typingRef.current = typing;
+  const joinRef = useRef(() => {});
+  joinRef.current = () => {
+    if (selection.length < 2) return;
+    void applyEdit({ kind: "join", track: selectedTrack, indices: selection });
+  };
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -221,6 +240,15 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         return;
       }
       if (overlayRef.current) return;
+
+      // Escape is the way out of typing mode, so it is read before the mode's own
+      // suspension — otherwise the only way back would be the mouse.
+      if (event.key === "Escape" && typingRef.current) {
+        event.preventDefault();
+        setTyping(false);
+        return;
+      }
+      if (typingRef.current) return;
 
       const mod = event.metaKey || event.ctrlKey;
 
@@ -253,6 +281,14 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
       if (!mod && event.key.toLowerCase() === "l") {
         event.preventDefault();
         toggleListenRef.current();
+        return;
+      }
+
+      // Join. Unmodified, because it is an editing verb like Record and Listen — and
+      // because ⌘J is the window manager's on macOS.
+      if (!mod && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        joinRef.current();
       }
     }
 
@@ -418,6 +454,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                 onScrub={(tick) => void transport.seek(tick)}
                 loopRegion={transport.loopRegion}
                 preview={rollPreview}
+                shortcutsSuspended={typing || listen.stage !== null}
               />
             ) : (
               <p className="muted">No track selected.</p>
@@ -443,6 +480,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
             ppq={manifest.ppq}
             listening={listen.listening}
             transcribeOptions={listen.options}
+            tuning={listen.tuning}
             capabilities={capabilities}
             onUndo={doUndo}
             onRedo={doRedo}
@@ -502,6 +540,11 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
               onNoteOn={noteOn}
               onNoteOff={noteOff}
               externalNotes={liveNotes}
+              // The overlay covers the keys, so the mode holds but does not listen while
+              // it is up — otherwise Space and the letters would be claimed by a panel
+              // nobody can see.
+              typing={typing && listen.stage === null}
+              onTypingChange={setTyping}
             />
           </div>
         )}
@@ -522,6 +565,12 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         </ListenOverlay>
       )}
 
+      {listen.stage === "working" && (
+        <ListenOverlay title="Working out what you played">
+          <ListenProgress />
+        </ListenOverlay>
+      )}
+
       {listen.stage === "review" && listen.pending?.kind === "transcription" && (
         <ListenOverlay
           title="What came back"
@@ -535,6 +584,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
             onChange={listen.replacePreview}
             onApply={() => void listen.applyPending()}
             onDiscard={() => void listen.discardPending()}
+            onPreviewNote={previewNote}
           />
         </ListenOverlay>
       )}

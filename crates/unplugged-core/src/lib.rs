@@ -11,6 +11,7 @@ pub mod command;
 pub mod error;
 pub mod host_sync;
 pub mod model;
+pub mod monophony;
 pub mod music;
 pub mod recorder;
 pub mod sequencer;

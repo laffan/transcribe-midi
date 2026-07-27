@@ -49,6 +49,12 @@ interface PianoRollProps {
    * preview is seeing what would move, not seeing the result in isolation.
    */
   preview?: NoteDiff | null;
+  /**
+   * True while another mode owns the keyboard — typing on the on-screen keys, or the
+   * listen overlay. The roll keeps its mouse behaviour and gives up its shortcuts, which
+   * is the only way `⌫`, `J` and the arrows can mean one thing at a time.
+   */
+  shortcutsSuspended?: boolean;
 }
 
 type Gesture =
@@ -72,6 +78,7 @@ export function PianoRoll({
   onScrub,
   loopRegion,
   preview,
+  shortcutsSuspended = false,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -612,7 +619,7 @@ export function PianoRoll({
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
-      if (preview) return;
+      if (preview || shortcutsSuspended) return;
 
       const mod = event.metaKey || event.ctrlKey;
 
@@ -673,7 +680,7 @@ export function PianoRoll({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selection, clipboard, track, trackIndex, onEdit, onSelectionChange, snap, ppq, timeSignature, playheadTicks, preview]);
+  }, [selection, clipboard, track, trackIndex, onEdit, onSelectionChange, snap, ppq, timeSignature, playheadTicks, preview, shortcutsSuspended]);
 
   // -- render --------------------------------------------------------------
 

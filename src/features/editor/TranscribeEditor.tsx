@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { AuditionSource, Note, TranscriptionPreview, WaveformPeaks } from "../../lib/types";
+import type {
+  AuditionSource,
+  Note,
+  TranscribeTuning,
+  TranscriptionPreview,
+  WaveformPeaks,
+} from "../../lib/types";
 import { drawTranscription } from "./transcribeDraw";
 import {
   hitTest,
@@ -14,6 +20,7 @@ import {
   type Drag,
   type Scale,
 } from "./transcribeGeometry";
+import { TuningDials } from "./TuningDials";
 import { useAudition } from "./useAudition";
 import "./TranscribeEditor.css";
 
@@ -23,6 +30,8 @@ interface TranscribeEditorProps {
   onChange: (preview: TranscriptionPreview) => void;
   onApply: () => void;
   onDiscard: () => void;
+  /** Sound a pitch briefly. What makes dragging a note something you can do by ear. */
+  onPreviewNote: (pitch: number) => void;
 }
 
 const GRIDS: { label: string; divisor: number }[] = [
@@ -55,6 +64,7 @@ export function TranscribeEditor({
   onChange,
   onApply,
   onDiscard,
+  onPreviewNote,
 }: TranscribeEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +74,8 @@ export function TranscribeEditor({
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag>({ type: "none" });
   const [busy, setBusy] = useState(false);
+  /** The last pitch sounded by a drag, so a semitone step blips once and not per frame. */
+  const auditioned = useRef<number | null>(null);
 
   const { source, changeSource, playhead, playFrom, stop, toggle } = useAudition();
 
@@ -117,17 +129,34 @@ export function TranscribeEditor({
 
   // -- playback ------------------------------------------------------------
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "SELECT")) return;
-      if (event.code !== "Space") return;
+  // Held in a ref so the listener is bound once and still sees the current selection —
+  // the same shape the editor's shortcuts use, for the same reason.
+  const shortcuts = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcuts.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "SELECT")) return;
+
+    if (event.code === "Space") {
       event.preventDefault();
       toggle();
+      return;
     }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteSelected();
+      return;
+    }
+    if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "j") {
+      event.preventDefault();
+      joinWithNext();
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => shortcuts.current(event);
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggle]);
+  }, []);
 
   // -- drawing -------------------------------------------------------------
 
@@ -168,6 +197,14 @@ export function TranscribeEditor({
     canvasRef.current?.setPointerCapture(event.pointerId);
     setDrag(hit);
     setSelected(hit.type === "none" ? null : hit.index);
+
+    // Sound what was grabbed. Correcting a transcription is an ear job, and the note
+    // under the cursor is the one being judged.
+    if (hit.type !== "none") {
+      const pitch = notes[hit.index]!.pitch;
+      auditioned.current = pitch;
+      onPreviewNote(pitch);
+    }
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -195,6 +232,12 @@ export function TranscribeEditor({
         note.duration_ticks = Math.max(1, end - note.start_ticks);
       }
 
+      // Dragging by ear: a blip on each semitone crossed, not on each pointer frame.
+      if (drag.type === "move" && note.pitch !== auditioned.current) {
+        auditioned.current = note.pitch;
+        onPreviewNote(note.pitch);
+      }
+
       next[drag.index] = note;
       return next;
     });
@@ -203,24 +246,35 @@ export function TranscribeEditor({
   function onPointerUp() {
     if (drag.type === "none") return;
     setDrag({ type: "none" });
-    void commit();
+    auditioned.current = null;
+    void commit(notes);
   }
 
-  /** Send the adjusted notes to Rust, which validates them. */
-  const commit = useCallback(async () => {
+  /**
+   * Send the adjusted notes to Rust and take back what it kept.
+   *
+   * Rust validates them and flattens any overlap a drag created, so what comes back is
+   * not always what went out. Adopting the answer is what keeps the next drag working
+   * against notes that actually exist.
+   */
+  const commit = useCallback(async (next: Note[]) => {
     try {
-      await api.captureSetNotes(notes);
+      setNotes(await api.captureSetNotes(next));
     } catch (e) {
       logger.error("Could not adjust the notes", errorMessage(e));
     }
-  }, [notes]);
+  }, []);
 
-  async function rederive(useProjectTempo: boolean, quantizeTicks: number) {
+  async function rederive(
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+    tuning: TranscribeTuning,
+  ) {
     setBusy(true);
     try {
       // The take is still here, so this re-reads it rather than asking for another
       // performance — which is the whole reason the audio is retained.
-      onChange(await api.captureRetranscribe(useProjectTempo, quantizeTicks));
+      onChange(await api.captureRetranscribe(useProjectTempo, quantizeTicks, tuning));
     } catch (e) {
       logger.error("Could not re-read the take", errorMessage(e));
     } finally {
@@ -230,9 +284,31 @@ export function TranscribeEditor({
 
   function deleteSelected() {
     if (selected === null) return;
-    setNotes((current) => current.filter((_, index) => index !== selected));
+    const next = notes.filter((_, index) => index !== selected);
     setSelected(null);
-    void commit();
+    void commit(next);
+  }
+
+  /**
+   * Merge the selected note into the one after it.
+   *
+   * The editor selects one note at a time, and the case this is for is always the same
+   * pair: a held note the analysis broke in two, at a vibrato wobble or a slur it read as
+   * an attack. Joining forwards covers it without a marquee, and repeating the key walks
+   * along a note that came back in four pieces.
+   */
+  function joinWithNext() {
+    if (selected === null || selected + 1 >= notes.length) return;
+    const first = notes[selected]!;
+    const second = notes[selected + 1]!;
+    const end = second.start_ticks + second.duration_ticks;
+
+    const next = notes.filter((_, index) => index !== selected + 1);
+    next[selected] = {
+      ...first,
+      duration_ticks: Math.max(1, end - first.start_ticks),
+    };
+    void commit(next);
   }
 
   const gridDivisor =
@@ -274,9 +350,9 @@ export function TranscribeEditor({
           </div>
 
           <span className="field__hint">
-            Space plays. Click the waveform to start from there. Drag a note to move it,
-            its edges to change length — edges snap to the detected attacks. The line is
-            the pitch that was actually measured.
+            Space plays. Click the waveform to start from there. Drag a note to hear and
+            move it, its edges to change length — edges snap to the detected attacks. The
+            line is the pitch that was actually measured.
           </span>
         </div>
 
@@ -292,6 +368,7 @@ export function TranscribeEditor({
                 void rederive(
                   preview.use_project_tempo,
                   divisor === 0 ? 0 : Math.round(ppq / divisor),
+                  preview.tuning,
                 );
               }}
             >
@@ -308,12 +385,27 @@ export function TranscribeEditor({
               type="checkbox"
               checked={preview.use_project_tempo}
               disabled={busy}
-              onChange={(e) => void rederive(e.target.checked, preview.quantize_ticks)}
+              onChange={(e) =>
+                void rederive(e.target.checked, preview.quantize_ticks, preview.tuning)
+              }
             />
             <span>Use the project tempo</span>
           </label>
 
-          <button className="btn" onClick={deleteSelected} disabled={selected === null}>
+          <button
+            className="btn"
+            onClick={joinWithNext}
+            disabled={selected === null || selected + 1 >= notes.length}
+            title="Join this note to the one after it (J)"
+          >
+            Join
+          </button>
+          <button
+            className="btn"
+            onClick={deleteSelected}
+            disabled={selected === null}
+            title="Delete the selected note (⌫)"
+          >
             Delete note
           </button>
 
@@ -330,6 +422,14 @@ export function TranscribeEditor({
             Add to track
           </button>
         </div>
+
+        <TuningDials
+          tuning={preview.tuning}
+          disabled={busy}
+          onCommit={(tuning) =>
+            void rederive(preview.use_project_tempo, preview.quantize_ticks, tuning)
+          }
+        />
       </footer>
     </>
   );

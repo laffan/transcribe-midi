@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { api, errorMessage } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { TranscriptionPreview } from "../../lib/types";
+import type { TranscribeTuning, TranscriptionPreview } from "../../lib/types";
 import "./TranscribeSettings.css";
 
 export interface TranscribeOptions {
@@ -15,6 +15,8 @@ interface TranscribeSettingsProps {
   trackIndex: number;
   ppq: number;
   options: TranscribeOptions;
+  /** Carried from the last take, so a file is read the way the microphone was. */
+  tuning: TranscribeTuning;
   disabled: boolean;
   onChange: (options: TranscribeOptions) => void;
   onResult: (preview: TranscriptionPreview) => void;
@@ -45,6 +47,7 @@ export function TranscribeSettings({
   trackIndex,
   ppq,
   options,
+  tuning,
   disabled,
   onChange,
   onResult,
@@ -67,7 +70,13 @@ export function TranscribeSettings({
       if (typeof path !== "string") return;
 
       onResult(
-        await api.captureLoadFile(path, trackIndex, options.useProjectTempo, gridTicks(options, ppq)),
+        await api.captureLoadFile(
+          path,
+          trackIndex,
+          options.useProjectTempo,
+          gridTicks(options, ppq),
+          tuning,
+        ),
       );
       logger.info("Transcribed from file");
     } catch (error) {

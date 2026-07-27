@@ -93,17 +93,20 @@ you touch one substantially, split it as part of the change:
 | `crates/unplugged-core/src/ai.rs` | ~2070 | `ai/` dir: tool defs, workspace, diff/transaction, rng, tests |
 | `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
 | `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
-| `crates/unplugged-core/src/command.rs` | ~840 | commands vs. history vs. tests |
 | `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
-| `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
 | `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
-| `src/features/editor/PianoRoll.tsx` | ~750 | grid math + interaction hooks out |
+| `src/features/editor/PianoRoll.tsx` | ~755 | grid math + interaction hooks out |
 
-`Editor.tsx` was on this list at ~830 lines and came off it under this rule: the toolbar
-work touched it substantially, so transport and capture state moved into `useTransport`
-and `useTranscription`, the panels became `Toolbar`, `TrackList` and `Inspector`, and what
-is left is the wiring between them. `TranscribeEditor.tsx` shed its geometry and its
-canvas drawing into `transcribeGeometry.ts` and `transcribeDraw.ts` the same way.
+Four files have come off this list by being touched, which is the rule working as
+intended:
+
+- **`Editor.tsx`** (~830) — transport and capture state into `useTransport` and
+  `useTranscription`, panels into `Toolbar`, `TrackList` and `Inspector`.
+- **`TranscribeEditor.tsx`** (~550) — geometry and canvas drawing into
+  `transcribeGeometry.ts` and `transcribeDraw.ts`.
+- **`command.rs`** (~980) — now a directory: `command/mod.rs` (session and history),
+  `command/edits.rs` (the gestures), `command/tests.rs`.
+- **`unplugged-transcribe/src/lib.rs`** (~1090) — tests into a sibling `tests.rs`.
 
 ## Coding standards
 
@@ -227,14 +230,20 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 
 ## Editor shortcuts (for manual testing)
 
-`Space` play/pause · `R` record · `L` listen/transcribe · `⌘K` prompt · `⌘Z`/`⇧⌘Z`
-undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q` quantize ·
-`⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
-`W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
-click empty grid draws, drag marquee-selects.
+`Space` play/pause · `R` record · `L` listen/transcribe · `J` join selection · `⌘K`
+prompt · `⌘Z`/`⇧⌘Z` undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead ·
+`⌘Q` quantize · `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note ·
+`⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects.
 
-The listen overlay is a mode and takes the keyboard while it is up: `Space` there plays
-the take back rather than the project, and the editor's shortcuts are suspended.
+**Two modes take the keyboard, and while either is on the editor's shortcuts are
+suspended.** This is deliberate: the letter keys mean different things in each, and there
+is no arrangement in which `L` can be both Listen and D.
+
+- **The listen overlay**, while it is up. `Space` plays the take back rather than the
+  project; `⌫` deletes the selected note; `J` joins it to the note after it.
+- **Typing mode**, toggled from the on-screen keyboard panel and left with `Esc`. `A`–`L`
+  + `W/E/T/Y/U` play the keys, `Z`/`X` shift the octave. The panel is outlined while it
+  is on, because "why did Space stop playing?" needs an answer on screen.
 
 ## Working agreements
 

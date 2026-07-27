@@ -40,6 +40,15 @@ interface OnScreenKeyboardProps {
   onNoteOff: (pitch: number) => void;
   /** Pitches held by live input, shown alongside local presses. */
   externalNotes?: Set<number>;
+  /**
+   * Whether the computer keyboard is playing these keys.
+   *
+   * Off, the mouse still works and every letter belongs to the editor's shortcuts. There
+   * is no in-between: `J` cannot be Join and B at the same time, and `L` cannot be
+   * Listen and D.
+   */
+  typing: boolean;
+  onTypingChange: (typing: boolean) => void;
 }
 
 export function OnScreenKeyboard({
@@ -48,6 +57,8 @@ export function OnScreenKeyboard({
   onNoteOn,
   onNoteOff,
   externalNotes,
+  typing,
+  onTypingChange,
 }: OnScreenKeyboardProps) {
   // MIDI 48 = C3, so the default two octaves span C3–C5 around middle C.
   const [baseOctave, setBaseOctave] = useState(4);
@@ -87,6 +98,10 @@ export function OnScreenKeyboard({
   // -- computer keyboard ---------------------------------------------------
 
   useEffect(() => {
+    // Nothing is bound at all unless the mode is on. Guarding inside the handler would
+    // still swallow auto-repeat and preventDefault from keys the editor wanted.
+    if (!typing) return;
+
     function isTypingTarget(target: EventTarget | null): boolean {
       const element = target as HTMLElement | null;
       return !!element && (
@@ -149,7 +164,14 @@ export function OnScreenKeyboard({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, [basePitch, press, release]);
+  }, [typing, basePitch, press, release]);
+
+  // Leaving the mode with keys down would strand them, since the keyup handler goes with
+  // the mode that was holding them.
+  useEffect(() => {
+    if (typing) return;
+    heldRef.current.forEach((pitch) => release(pitch));
+  }, [typing, release]);
 
   // -- layout --------------------------------------------------------------
 
@@ -164,13 +186,26 @@ export function OnScreenKeyboard({
   const whiteIndexOf = (pitch: number) => whites.findIndex((w) => w > pitch);
 
   return (
-    <div className="keys">
+    <div className={`keys ${typing ? "keys--typing" : ""}`}>
       <div className="keys__controls">
+        <button
+          className={`btn ${typing ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => onTypingChange(!typing)}
+          aria-pressed={typing}
+          title={
+            typing
+              ? "Typing plays these keys — editor shortcuts are paused. Esc to leave."
+              : "Play these keys from the computer keyboard. Editor shortcuts pause while it is on."
+          }
+        >
+          {typing ? "Typing ⏎" : "Typing"}
+        </button>
+
         <button
           className="btn btn--ghost btn--icon"
           onClick={() => setBaseOctave((o) => Math.max(0, o - 1))}
           aria-label="Octave down"
-          title="Octave down (Z)"
+          title={typing ? "Octave down (Z)" : "Octave down"}
         >
           −
         </button>
@@ -179,7 +214,7 @@ export function OnScreenKeyboard({
           className="btn btn--ghost btn--icon"
           onClick={() => setBaseOctave((o) => Math.min(9, o + 1))}
           aria-label="Octave up"
-          title="Octave up (X)"
+          title={typing ? "Octave up (X)" : "Octave up"}
         >
           +
         </button>
@@ -234,6 +269,7 @@ export function OnScreenKeyboard({
       </div>
 
       <div className="keys__meta muted">
+        {typing && <span className="keys__mode">A–L · W/E/T/Y/U · Z/X · Esc</span>}
         <span className="mono">vel {velocity}</span>
         <span className="mono">ch {channel + 1}</span>
       </div>

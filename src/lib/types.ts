@@ -113,6 +113,7 @@ export type EditRequest =
   | { kind: "resize"; track: number; indices: number[]; delta_ticks: number }
   | { kind: "set_velocity"; track: number; indices: number[]; velocity: number }
   | { kind: "quantize"; track: number; indices: number[]; grid_ticks: number }
+  | { kind: "join"; track: number; indices: number[] }
   | { kind: "paste"; track: number; notes: Note[]; at_ticks: number };
 
 // --- Transport (phase 2) ---------------------------------------------------
@@ -293,6 +294,35 @@ export interface Analysis {
   silence_floor: number;
 }
 
+/**
+ * The judgement calls in the analysis, as numbers. Mirrors `TranscribeTuning` in
+ * `crates/unplugged-transcribe`.
+ *
+ * Rust clamps every one of these, so a value out of range is a dull result rather than a
+ * broken pipeline — but the controls should not offer one anyway.
+ */
+export interface TranscribeTuning {
+  /** 0–1. How readily a repeated note is split from its neighbour. */
+  split_sensitivity: number;
+  /** Shortest note kept, in milliseconds. */
+  min_note_ms: number;
+  /** Semitones the pitch must move before it counts as a new note. */
+  pitch_tolerance_semitones: number;
+  /** Silence threshold, as a fraction of the take's peak. */
+  noise_floor: number;
+  /** How sure the pitch tracker must be for a frame to count. */
+  min_confidence: number;
+}
+
+/** Must match `TranscribeTuning::default()` — the tuning every take is first read with. */
+export const DEFAULT_TUNING: TranscribeTuning = {
+  split_sensitivity: 0.5,
+  min_note_ms: 60,
+  pitch_tolerance_semitones: 0.5,
+  noise_floor: 0.02,
+  min_confidence: 0.55,
+};
+
 export interface TranscriptionPreview {
   notes: DetectedNote[];
   tempo_bpm: number;
@@ -304,6 +334,7 @@ export interface TranscriptionPreview {
   analysis: Analysis;
   use_project_tempo: boolean;
   quantize_ticks: number;
+  tuning: TranscribeTuning;
 }
 
 /** Min/max pairs for drawing a waveform. */

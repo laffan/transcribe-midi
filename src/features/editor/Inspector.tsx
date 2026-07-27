@@ -1,4 +1,10 @@
-import type { EditorState, PlatformCapabilities, Track, TranscriptionPreview } from "../../lib/types";
+import type {
+  EditorState,
+  PlatformCapabilities,
+  Track,
+  TranscribeTuning,
+  TranscriptionPreview,
+} from "../../lib/types";
 import { HistoryStrip } from "./HistoryStrip";
 import { InterchangeBar } from "./InterchangeBar";
 import { TranscribeSettings, type TranscribeOptions } from "./TranscribeSettings";
@@ -11,6 +17,7 @@ interface InspectorProps {
   ppq: number;
   listening: boolean;
   transcribeOptions: TranscribeOptions;
+  tuning: TranscribeTuning;
   capabilities: PlatformCapabilities | null;
   onUndo: () => void;
   onRedo: () => void;
@@ -34,6 +41,7 @@ export function Inspector({
   ppq,
   listening,
   transcribeOptions,
+  tuning,
   capabilities,
   onUndo,
   onRedo,
@@ -94,13 +102,21 @@ export function Inspector({
               <dt className="mono">⌘A</dt><dd>Select all</dd>
               <dt className="mono">⌘C / ⌘X / ⌘V</dt><dd>Copy / cut / paste</dd>
               <dt className="mono">⌘Q</dt><dd>Quantize selection</dd>
+              <dt className="mono">J</dt><dd>Join selection into one note</dd>
               <dt className="mono">⌫</dt><dd>Delete selection</dd>
               <dt className="mono">↑ ↓ ← →</dt><dd>Nudge (⇧ for octave / bar)</dd>
               <dt className="mono">⌥click</dt><dd>Delete note</dd>
-              <dt className="mono">A–L, W/E/T/Y/U</dt><dd>Play keys</dd>
-              <dt className="mono">Z / X</dt><dd>Octave down / up</dd>
+              <dt className="mono">R</dt><dd>Record</dd>
               <dt className="mono">L</dt><dd>Listen (audio → MIDI)</dd>
               <dt className="mono">⌘K</dt><dd>Focus the prompt</dd>
+            </dl>
+            <p className="field__hint">
+              The letter keys play the on-screen keyboard only in Typing mode, which
+              pauses everything above. Turn it on from the keyboard panel; Esc leaves.
+            </p>
+            <dl className="shortcuts">
+              <dt className="mono">A–L, W/E/T/Y/U</dt><dd>Play keys (typing)</dd>
+              <dt className="mono">Z / X</dt><dd>Octave down / up (typing)</dd>
             </dl>
           </details>
 
@@ -110,6 +126,7 @@ export function Inspector({
             trackIndex={trackIndex}
             ppq={ppq}
             options={transcribeOptions}
+            tuning={tuning}
             disabled={listening}
             onChange={onTranscribeOptionsChange}
             onResult={onTranscribed}

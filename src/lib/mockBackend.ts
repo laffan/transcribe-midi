@@ -27,6 +27,7 @@ import type {
   ImportResult,
   InputSettings,
   MidiPort,
+  Note,
   PlatformCapabilities,
   RecordResult,
   Project,
@@ -449,7 +450,8 @@ export const mockBackend = {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
   capture_waveform: (): WaveformPeaks => [],
-  capture_set_notes(): number {
+  capture_progress: (): number => 0,
+  capture_set_notes(): Note[] {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
   capture_audition_play(): void {

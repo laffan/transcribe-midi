@@ -14,6 +14,7 @@ import type {
   AiModelsResponse,
   AuditionSource,
   CaptureStatus,
+  TranscribeTuning,
   TranscriptionPreview,
   AiProposal,
   AiStatus,
@@ -174,29 +175,51 @@ export const api = {
 
   captureStart: () => call<CaptureStatus>("capture_start"),
   capturePoll: () => call<CaptureStatus>("capture_poll"),
-  captureTranscribe: (track: number, useProjectTempo: boolean, quantizeTicks: number) =>
+  captureTranscribe: (
+    track: number,
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+    tuning: TranscribeTuning,
+  ) =>
     call<TranscriptionPreview>("capture_transcribe", {
       track,
       useProjectTempo,
       quantizeTicks,
+      tuning,
     }),
-  captureRetranscribe: (useProjectTempo: boolean, quantizeTicks: number) =>
-    call<TranscriptionPreview>("capture_retranscribe", { useProjectTempo, quantizeTicks }),
+  captureRetranscribe: (
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+    tuning: TranscribeTuning,
+  ) =>
+    call<TranscriptionPreview>("capture_retranscribe", {
+      useProjectTempo,
+      quantizeTicks,
+      tuning,
+    }),
   captureLoadFile: (
     path: string,
     track: number,
     useProjectTempo: boolean,
     quantizeTicks: number,
+    tuning: TranscribeTuning,
   ) =>
     call<TranscriptionPreview>("capture_load_file", {
       path,
       track,
       useProjectTempo,
       quantizeTicks,
+      tuning,
     }),
   captureWaveform: (fromSeconds: number, toSeconds: number, buckets: number) =>
     call<WaveformPeaks>("capture_waveform", { fromSeconds, toSeconds, buckets }),
-  captureSetNotes: (notes: Note[]) => call<number>("capture_set_notes", { notes }),
+  /** How far through the analysis Rust is, 0–1. */
+  captureProgress: () => call<number>("capture_progress"),
+  /**
+   * Hand the adjusted notes to Rust and take back what it kept. The list can come back
+   * shorter or shortened — the take was one voice, and Rust is where that is enforced.
+   */
+  captureSetNotes: (notes: Note[]) => call<Note[]>("capture_set_notes", { notes }),
   captureAccept: () => call<EditorState>("capture_accept"),
   captureCancel: () => call<void>("capture_cancel"),
 

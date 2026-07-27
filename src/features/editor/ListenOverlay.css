@@ -72,6 +72,56 @@
   padding: var(--space-5);
 }
 
+.listen__body--working {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+/* --------------------------------------------------------------- working -- */
+
+/*
+ * The wait, given a shape. Narrow and centred rather than full-bleed: there is nothing
+ * to look at here, and a bar the width of a display reads as a page loading rather than
+ * as a few seconds of arithmetic.
+ */
+.working {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(440px, 100%);
+  text-align: center;
+}
+
+.working__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--text-0);
+}
+
+.working__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.working__fill {
+  display: block;
+  height: 100%;
+  background: var(--diff-added);
+  /* Slightly slower than the poll, so the bar glides between samples instead of
+     stepping. Nothing is being animated for its own sake. */
+  transition: width 120ms linear;
+}
+
+.working__detail {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+
 /* --------------------------------------------------------------- actions -- */
 
 .listen__actions {

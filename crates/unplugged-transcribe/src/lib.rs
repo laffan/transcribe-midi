@@ -49,9 +49,9 @@ const MIN_CONFIDENCE: f32 = 0.55;
 /// Relative rather than absolute so a quiet take transcribes like a loud one.
 const SILENCE_FLOOR: f32 = 0.02;
 
-/// Shortest note kept, in frames. Below this it is a chirp between two notes rather than
-/// a note — 60 ms is already faster than anything played deliberately.
-const MIN_NOTE_FRAMES: usize = 6;
+/// Shortest note kept, in milliseconds. Below this it is a chirp between two notes rather
+/// than a note — 60 ms is already faster than anything played deliberately.
+const MIN_NOTE_MS: f32 = 60.0;
 
 /// A pitch change this large starts a new note even without an onset. Half a semitone,
 /// so ordinary vibrato does not fragment a held note.
@@ -60,6 +60,99 @@ const PITCH_BREAK_SEMITONES: f32 = 0.5;
 // ---------------------------------------------------------------------------
 // Options and results
 // ---------------------------------------------------------------------------
+
+/// The judgement calls in the pipeline, as numbers the user can move.
+///
+/// Every one of these was a constant, and every one of them is a guess about the source:
+/// how percussive it is, how steady the singer's pitch is, how much room noise there is.
+/// The defaults are the guess that suits a hummed line at a laptop, which is the common
+/// case and not the only one — a plucked string wants a different split sensitivity, and
+/// a voice with a wide vibrato wants a different pitch tolerance. Getting them wrong
+/// produces a plausible-looking result, so they are worth exposing rather than worth
+/// tuning once and hiding.
+///
+/// The take is retained for the session, so changing one of these re-reads what was
+/// already performed rather than asking for it again.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TranscribeTuning {
+    /// How readily a repeated note is split from its neighbour. 0 needs an unmistakable
+    /// attack; 1 splits on the slightest one. 0.5 is the tuning everything before this
+    /// was fixed at.
+    pub split_sensitivity: f32,
+    /// Shortest note kept, in milliseconds. Anything briefer is a chirp between two
+    /// notes rather than a note.
+    pub min_note_ms: f32,
+    /// How far the pitch must move, in semitones, before it counts as a new note rather
+    /// than the same one wavering. Raise it for a singer with a wide vibrato; lower it
+    /// to catch a legato slur that has no attack for the flux to see.
+    pub pitch_tolerance_semitones: f32,
+    /// Level below which a frame is silence, as a fraction of the take's own peak.
+    /// Raise it to ignore room noise; lower it to keep a quiet tail.
+    pub noise_floor: f32,
+    /// How sure the pitch tracker must be for a frame to count as pitched. Lower it for
+    /// a breathy or noisy source that is coming back with nothing.
+    pub min_confidence: f32,
+}
+
+impl Default for TranscribeTuning {
+    fn default() -> Self {
+        TranscribeTuning {
+            split_sensitivity: 0.5,
+            min_note_ms: MIN_NOTE_MS,
+            pitch_tolerance_semitones: PITCH_BREAK_SEMITONES,
+            noise_floor: SILENCE_FLOOR,
+            min_confidence: MIN_CONFIDENCE,
+        }
+    }
+}
+
+impl TranscribeTuning {
+    /// Bring every dial inside the range the pipeline can actually work over.
+    ///
+    /// These arrive from the webview. A zero-length minimum note or a confidence of two
+    /// does not crash anything, it just returns thousands of notes or none, which looks
+    /// like a broken transcriber rather than a bad setting.
+    pub fn clamped(self) -> Self {
+        TranscribeTuning {
+            split_sensitivity: clamp(self.split_sensitivity, 0.0, 1.0),
+            min_note_ms: clamp(self.min_note_ms, 10.0, 1000.0),
+            pitch_tolerance_semitones: clamp(self.pitch_tolerance_semitones, 0.1, 6.0),
+            noise_floor: clamp(self.noise_floor, 0.0, 0.5),
+            min_confidence: clamp(self.min_confidence, 0.1, 0.95),
+        }
+    }
+
+    /// Shortest note, in frames, at this hop.
+    fn min_note_frames(&self, hop_seconds: f64) -> usize {
+        ((self.min_note_ms as f64 / 1000.0 / hop_seconds.max(1e-6)).round() as usize).max(1)
+    }
+
+    /// Onset parameters for this sensitivity.
+    ///
+    /// One multiplicative scale over all three thresholds, so the dial is monotone and
+    /// nothing can cross zero: 0.5 reproduces [`onset::OnsetParams::default`] exactly,
+    /// which is what every transcription before this was made with.
+    fn onset_params(&self) -> onset::OnsetParams {
+        let defaults = onset::OnsetParams::default();
+        let scale = 2f32.powf(1.0 - 2.0 * self.split_sensitivity);
+        onset::OnsetParams {
+            delta: defaults.delta * scale,
+            ratio: 1.0 + (defaults.ratio - 1.0) * scale,
+            min_flux: defaults.min_flux * scale,
+            ..defaults
+        }
+    }
+}
+
+/// `f32::clamp` panics on a NaN bound; this substitutes the low end instead, because a
+/// NaN arriving from JSON should be a dull default rather than a crash.
+fn clamp(value: f32, low: f32, high: f32) -> f32 {
+    if value.is_nan() {
+        low
+    } else {
+        value.clamp(low, high)
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TranscribeOptions {
@@ -71,6 +164,7 @@ pub struct TranscribeOptions {
     pub quantize_ticks: u32,
     /// MIDI channel for the produced notes.
     pub channel: u8,
+    pub tuning: TranscribeTuning,
 }
 
 impl TranscribeOptions {
@@ -81,6 +175,7 @@ impl TranscribeOptions {
             tempo_bpm: None,
             quantize_ticks: 0,
             channel: 0,
+            tuning: TranscribeTuning::default(),
         }
     }
 }
@@ -145,8 +240,8 @@ pub struct Frame {
 }
 
 impl Frame {
-    fn voiced(&self, floor: f32) -> bool {
-        self.frequency > 0.0 && self.confidence >= MIN_CONFIDENCE && self.level > floor
+    fn voiced(&self, floor: f32, min_confidence: f32) -> bool {
+        self.frequency > 0.0 && self.confidence >= min_confidence && self.level > floor
     }
 }
 
@@ -165,10 +260,33 @@ pub struct Analysis {
 
 /// Transcribe mono samples into notes.
 pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription {
+    transcribe_reporting(samples, options, &mut |_| {})
+}
+
+/// How much of the total time the pitch stage accounts for.
+///
+/// YIN over every frame is the dominant cost and spectral flux is most of the rest, so
+/// the bar is split between them rather than by pipeline stage — the tempo estimate and
+/// the assembly are a pass each over one value per frame and finish instantly.
+const PITCH_SHARE: f32 = 0.65;
+const FLUX_SHARE: f32 = 0.33;
+
+/// [`transcribe`], reporting 0–1 as it goes.
+///
+/// The caller gets progress rather than a spinner because two minutes of audio is
+/// several seconds of work, and a bar that is not moving is indistinguishable from an
+/// app that has hung. `progress` is called from whatever thread this runs on.
+pub fn transcribe_reporting(
+    samples: &[f32],
+    options: TranscribeOptions,
+    progress: &mut dyn FnMut(f32),
+) -> Transcription {
+    let tuning = options.tuning.clamped();
     let hop = ((options.sample_rate * HOP_SECONDS).round() as usize).max(1);
     let duration_seconds = samples.len() as f64 / options.sample_rate.max(1.0);
 
     if samples.len() < FRAME_SIZE || options.sample_rate <= 0.0 {
+        progress(1.0);
         return Transcription {
             tempo_bpm: options.tempo_bpm.unwrap_or(unplugged_core::DEFAULT_TEMPO),
             duration_seconds,
@@ -183,9 +301,14 @@ pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription 
         .map(|start| &samples[start..start + FRAME_SIZE])
         .collect();
 
+    let total = windows.len().max(1);
     let frames: Vec<Frame> = windows
         .iter()
-        .map(|window| {
+        .enumerate()
+        .map(|(index, window)| {
+            if index % 16 == 0 {
+                progress(index as f32 / total as f32 * PITCH_SHARE);
+            }
             let estimate = pitch::yin(window, options.sample_rate, MIN_HZ, MAX_HZ);
             Frame {
                 frequency: estimate.frequency,
@@ -197,11 +320,14 @@ pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription 
         .collect();
 
     let peak = frames.iter().map(|f| f.level).fold(0.0f32, f32::max);
-    let floor = peak * SILENCE_FLOOR;
+    let floor = peak * tuning.noise_floor;
 
     // -- onsets -----------------------------------------------------------
     let window = dsp::hann(FRAME_SIZE);
-    let track = onset::detect(&windows, &window, onset::OnsetParams::default());
+    let track = onset::detect_reporting(&windows, &window, tuning.onset_params(), &mut |done| {
+        progress(PITCH_SHARE + done * FLUX_SHARE)
+    });
+    progress(PITCH_SHARE + FLUX_SHARE);
 
     // -- tempo ------------------------------------------------------------
     let frames_per_second = options.sample_rate / hop as f64;
@@ -214,13 +340,23 @@ pub fn transcribe(samples: &[f32], options: TranscribeOptions) -> Transcription 
     };
 
     // -- assemble ---------------------------------------------------------
-    let segments = segment(&frames, &track.onsets, floor);
-    let notes = segments
+    let segments = segment(&frames, &track.onsets, floor, &tuning);
+    let detected: Vec<DetectedNote> = segments
         .iter()
-        .filter_map(|&(start, end)| build_note(&frames, start, end, hop, tempo_bpm, &options, floor))
+        .filter_map(|&(start, end)| {
+            build_note(&frames, start, end, hop, tempo_bpm, &options, floor, &tuning)
+        })
         .collect();
+    // Segments cannot overlap, but quantisation can push one note's snapped start behind
+    // its neighbour's snapped end. What was performed by one voice must come back
+    // playable by one voice.
+    let notes = one_voice(detected);
 
-    let pitched = frames.iter().filter(|f| f.voiced(floor)).count();
+    let pitched = frames
+        .iter()
+        .filter(|f| f.voiced(floor, tuning.min_confidence))
+        .count();
+    progress(1.0);
 
     Transcription {
         notes,
@@ -292,7 +428,30 @@ pub fn peaks(
 /// or two early — the attack is somewhere inside the window that first saw it. In
 /// exchange, a note is never clipped at the front, which is far more audible than a
 /// little silence before it.
-fn segment(frames: &[Frame], onsets: &[usize], floor: f32) -> Vec<(usize, usize)> {
+/// Apply the monophonic rule to detected notes, keeping their evidence.
+///
+/// The decision belongs to `unplugged_core::monophony` — it is the same rule the fine-tune
+/// editor's drags go through, and two copies of it would drift. Only the note is trimmed:
+/// `start_seconds` and `duration_seconds` are measurements of the performance, and a
+/// measurement does not change because a grid moved a note.
+fn one_voice(detected: Vec<DetectedNote>) -> Vec<DetectedNote> {
+    let notes: Vec<Note> = detected.iter().map(|d| d.note).collect();
+    unplugged_core::monophony::flatten_indexed(&notes)
+        .into_iter()
+        .map(|(index, duration_ticks)| {
+            let mut kept = detected[index];
+            kept.note.duration_ticks = duration_ticks;
+            kept
+        })
+        .collect()
+}
+
+fn segment(
+    frames: &[Frame],
+    onsets: &[usize],
+    floor: f32,
+    tuning: &TranscribeTuning,
+) -> Vec<(usize, usize)> {
     let is_onset = {
         let mut flags = vec![false; frames.len()];
         for &index in onsets {
@@ -308,7 +467,7 @@ fn segment(frames: &[Frame], onsets: &[usize], floor: f32) -> Vec<(usize, usize)
     let mut reference = 0.0f32;
 
     for (index, frame) in frames.iter().enumerate() {
-        let voiced = frame.voiced(floor);
+        let voiced = frame.voiced(floor, tuning.min_confidence);
 
         let Some(start) = open else {
             if voiced {
@@ -325,7 +484,7 @@ fn segment(frames: &[Frame], onsets: &[usize], floor: f32) -> Vec<(usize, usize)
         }
 
         let midi = pitch::hz_to_midi(frame.frequency);
-        let moved = (midi - reference).abs() >= PITCH_BREAK_SEMITONES;
+        let moved = (midi - reference).abs() >= tuning.pitch_tolerance_semitones;
 
         if is_onset[index] || moved {
             segments.push((start, index));
@@ -345,6 +504,7 @@ fn segment(frames: &[Frame], onsets: &[usize], floor: f32) -> Vec<(usize, usize)
     segments
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_note(
     frames: &[Frame],
     start: usize,
@@ -353,8 +513,12 @@ fn build_note(
     tempo_bpm: f64,
     options: &TranscribeOptions,
     floor: f32,
+    tuning: &TranscribeTuning,
 ) -> Option<DetectedNote> {
-    if end.saturating_sub(start) < MIN_NOTE_FRAMES {
+    let seconds_per_frame = hop as f64 / options.sample_rate;
+    let min_frames = tuning.min_note_frames(seconds_per_frame);
+
+    if end.saturating_sub(start) < min_frames {
         return None;
     }
 
@@ -363,10 +527,10 @@ fn build_note(
     let body_start = (start + 2).min(end);
     let voiced: Vec<&Frame> = frames[body_start..end]
         .iter()
-        .filter(|frame| frame.voiced(floor))
+        .filter(|frame| frame.voiced(floor, tuning.min_confidence))
         .collect();
 
-    if voiced.len() < MIN_NOTE_FRAMES / 2 {
+    if voiced.len() < min_frames / 2 {
         return None;
     }
 
@@ -386,7 +550,6 @@ fn build_note(
     let peak_level = voiced.iter().map(|frame| frame.level).fold(0.0f32, f32::max);
     let velocity = level_to_velocity(peak_level, floor);
 
-    let seconds_per_frame = hop as f64 / options.sample_rate;
     let start_seconds = start as f64 * seconds_per_frame;
     let duration_seconds = (end - start) as f64 * seconds_per_frame;
 
@@ -435,335 +598,4 @@ fn level_to_velocity(level: f32, floor: f32) -> u8 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::f32::consts::PI;
-
-    const SAMPLE_RATE: f64 = 44100.0;
-    const PPQ: u16 = 480;
-
-    fn options() -> TranscribeOptions {
-        TranscribeOptions::new(SAMPLE_RATE, PPQ)
-    }
-
-    /// A note with harmonics and a percussive envelope — close enough to a plucked or
-    /// struck instrument for the pipeline to behave as it would on a real take.
-    fn note_signal(midi: u8, seconds: f64, amplitude: f32) -> Vec<f32> {
-        let hz = pitch::midi_to_hz(midi as f32);
-        let samples = (SAMPLE_RATE * seconds) as usize;
-        (0..samples)
-            .map(|i| {
-                let t = i as f32 / SAMPLE_RATE as f32;
-                let envelope = (-3.0 * t / seconds as f32).exp();
-                amplitude
-                    * envelope
-                    * ((2.0 * PI * hz * t).sin()
-                        + 0.5 * (2.0 * PI * hz * 2.0 * t).sin()
-                        + 0.25 * (2.0 * PI * hz * 3.0 * t).sin())
-                    / 1.75
-            })
-            .collect()
-    }
-
-    fn melody(pitches: &[u8], seconds_each: f64) -> Vec<f32> {
-        let mut signal = Vec::new();
-        for &midi in pitches {
-            signal.extend(note_signal(midi, seconds_each, 0.7));
-        }
-        signal
-    }
-
-    #[test]
-    fn transcribes_a_simple_melody() {
-        let played = [60u8, 62, 64, 65, 67];
-        let result = transcribe(&melody(&played, 0.5), options());
-
-        assert_eq!(
-            result.notes().iter().map(|n| n.pitch).collect::<Vec<_>>(),
-            played,
-            "detected {:?}",
-            result
-                .notes
-                .iter()
-                .map(|n| (n.note.pitch, n.start_seconds))
-                .collect::<Vec<_>>()
-        );
-
-        for (index, detected) in result.notes.iter().enumerate() {
-            let expected = index as f64 * 0.5;
-            assert!(
-                (detected.start_seconds - expected).abs() < 0.07,
-                "note {index} starts at {:.3}s, expected {expected:.3}s",
-                detected.start_seconds
-            );
-            assert!(detected.confidence > 0.7);
-            assert!(detected.cents_off.abs() < 30.0, "{}", detected.cents_off);
-        }
-    }
-
-    #[test]
-    fn separates_repeated_notes_at_the_same_pitch() {
-        // Pitch alone cannot see these boundaries; the flux onsets are what find them.
-        let result = transcribe(&melody(&[60, 60, 60, 60], 0.45), options());
-        assert_eq!(result.notes.len(), 4, "{:?}", result.notes());
-    }
-
-    #[test]
-    fn silence_produces_nothing() {
-        let result = transcribe(&vec![0.0f32; 44100 * 2], options());
-        assert!(result.notes.is_empty());
-        assert_eq!(result.pitched_fraction, 0.0);
-        assert!((result.duration_seconds - 2.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn a_buffer_shorter_than_one_frame_is_handled() {
-        let result = transcribe(&vec![0.1f32; 100], options());
-        assert!(result.notes.is_empty());
-        assert!(result.tempo_bpm > 0.0, "a usable tempo is still reported");
-    }
-
-    #[test]
-    fn leading_silence_does_not_become_a_note() {
-        let mut signal = vec![0.0f32; 22050];
-        signal.extend(note_signal(64, 0.6, 0.7));
-
-        let result = transcribe(&signal, options());
-        assert_eq!(result.notes.len(), 1, "{:?}", result.notes());
-        assert_eq!(result.notes[0].note.pitch, 64);
-        assert!(
-            (result.notes[0].start_seconds - 0.5).abs() < 0.07,
-            "started at {:.3}s",
-            result.notes[0].start_seconds
-        );
-    }
-
-    #[test]
-    fn a_legato_slur_still_becomes_two_notes() {
-        // No attack between them, so there is no onset to find — the pitch break is the
-        // only evidence, which is exactly why segmentation looks for it.
-        let mut signal = Vec::new();
-        let hz_a = pitch::midi_to_hz(60.0);
-        let hz_b = pitch::midi_to_hz(67.0);
-        let half = (SAMPLE_RATE * 0.6) as usize;
-        let mut phase = 0.0f32;
-
-        for i in 0..half * 2 {
-            let hz = if i < half { hz_a } else { hz_b };
-            phase += 2.0 * PI * hz / SAMPLE_RATE as f32;
-            signal.push(0.6 * phase.sin());
-        }
-
-        let result = transcribe(&signal, options());
-        let pitches: Vec<u8> = result.notes().iter().map(|n| n.pitch).collect();
-        assert_eq!(pitches, vec![60, 67], "{:?}", result.notes());
-    }
-
-    #[test]
-    fn vibrato_does_not_fragment_a_held_note() {
-        let hz = pitch::midi_to_hz(69.0);
-        let samples = (SAMPLE_RATE * 1.2) as usize;
-        let mut phase = 0.0f32;
-        let signal: Vec<f32> = (0..samples)
-            .map(|i| {
-                let t = i as f32 / SAMPLE_RATE as f32;
-                // ±25 cents at 5 Hz — an ordinary singing or string vibrato.
-                let bend = 1.0 + 0.0145 * (2.0 * PI * 5.0 * t).sin();
-                phase += 2.0 * PI * hz * bend / SAMPLE_RATE as f32;
-                0.6 * phase.sin()
-            })
-            .collect();
-
-        let result = transcribe(&signal, options());
-        assert_eq!(result.notes.len(), 1, "{:?}", result.notes());
-        assert_eq!(result.notes[0].note.pitch, 69);
-    }
-
-    #[test]
-    fn a_given_tempo_is_used_verbatim() {
-        let mut settings = options();
-        settings.tempo_bpm = Some(96.0);
-
-        let result = transcribe(&melody(&[60, 62], 0.5), settings);
-        assert_eq!(result.tempo_bpm, 96.0);
-        assert!(!result.tempo_estimated);
-
-        // At 96 bpm a quarter note is 625 ms, so 500 ms is 384 ticks.
-        let second = result.notes[1].note.start_ticks as i64;
-        assert!((second - 384).abs() <= 16, "second note at {second} ticks");
-    }
-
-    #[test]
-    fn quantization_snaps_to_the_grid() {
-        let mut settings = options();
-        settings.tempo_bpm = Some(120.0);
-        settings.quantize_ticks = 240; // eighth notes
-
-        // At 120 bpm, 0.45 s is 432 ticks — deliberately off the eighth-note grid.
-        let result = transcribe(&melody(&[60, 62, 64], 0.45), settings);
-        assert!(!result.notes.is_empty());
-        for detected in &result.notes {
-            assert_eq!(
-                detected.note.start_ticks % 240,
-                0,
-                "note at {} is off the grid",
-                detected.note.start_ticks
-            );
-            assert!(detected.note.duration_ticks >= 240);
-        }
-    }
-
-    #[test]
-    fn velocity_follows_loudness() {
-        let mut signal = note_signal(60, 0.5, 0.9);
-        signal.extend(note_signal(62, 0.5, 0.15));
-
-        let result = transcribe(&signal, options());
-        assert_eq!(result.notes.len(), 2, "{:?}", result.notes());
-        assert!(
-            result.notes[0].note.velocity > result.notes[1].note.velocity + 10,
-            "{} vs {}",
-            result.notes[0].note.velocity,
-            result.notes[1].note.velocity
-        );
-        assert!(result.notes.iter().all(|n| n.note.velocity >= 1));
-    }
-
-    #[test]
-    fn the_notes_come_back_valid_and_ordered() {
-        let result = transcribe(&melody(&[55, 60, 64, 67, 72], 0.4), options());
-        let notes = result.notes();
-
-        assert!(!notes.is_empty());
-        for note in &notes {
-            note.validate()
-                .expect("every produced note must be representable in SMF");
-        }
-        for pair in notes.windows(2) {
-            assert!(
-                pair[0].order_key() <= pair[1].order_key(),
-                "notes must come back sorted"
-            );
-        }
-    }
-
-    #[test]
-    fn the_analysis_comes_back_with_the_notes() {
-        let result = transcribe(&melody(&[60, 62, 64], 0.5), options());
-        let analysis = &result.analysis;
-
-        assert!(!analysis.frames.is_empty());
-        assert!((analysis.hop_seconds - HOP_SECONDS).abs() < 1e-9);
-        assert!(analysis.silence_floor > 0.0);
-
-        // Two boundaries for three notes — the first note's attack is at sample zero and
-        // flux has nothing to change from, which segmentation handles by voicing.
-        assert_eq!(analysis.onsets.len(), 2, "{:?}", analysis.onsets);
-
-        // The pitch line has to be drawable: a voiced frame carries a fractional MIDI
-        // value near the note it belongs to.
-        let voiced: Vec<&Frame> = analysis
-            .frames
-            .iter()
-            .filter(|f| f.voiced(analysis.silence_floor))
-            .collect();
-        assert!(voiced.len() > analysis.frames.len() / 4);
-        for frame in voiced {
-            assert!(
-                (59.0..=65.0).contains(&frame.midi),
-                "stray pitch frame at {}",
-                frame.midi
-            );
-        }
-    }
-
-    #[test]
-    fn frames_line_up_with_the_notes_they_produced() {
-        let result = transcribe(&melody(&[60, 67], 0.6), options());
-        let analysis = &result.analysis;
-
-        for detected in &result.notes {
-            // The middle of each note should be a voiced frame at that note's pitch.
-            let middle = detected.start_seconds + detected.duration_seconds / 2.0;
-            let index = (middle / analysis.hop_seconds) as usize;
-            let frame = analysis.frames.get(index).expect("frame inside the note");
-
-            assert!(
-                (frame.midi - detected.note.pitch as f32).abs() < 1.0,
-                "frame {index} reads {:.2}, note is {}",
-                frame.midi,
-                detected.note.pitch
-            );
-        }
-    }
-
-    #[test]
-    fn peaks_keep_the_transient() {
-        // A single spike in an otherwise quiet buffer. Averaging would bury it; min/max
-        // must not, because that spike is the attack a user is looking for.
-        let mut samples = vec![0.01f32; 10_000];
-        samples[5_000] = 1.0;
-        samples[5_001] = -1.0;
-
-        let buckets = peaks(&samples, 10_000.0, 0.0, 1.0, 100);
-        assert_eq!(buckets.len(), 100);
-
-        let (min, max) = buckets[50];
-        assert!((max - 1.0).abs() < 1e-6, "the peak survives: {max}");
-        assert!((min + 1.0).abs() < 1e-6, "and so does the trough: {min}");
-
-        // Its neighbours stay quiet.
-        assert!(buckets[49].1 < 0.02 && buckets[51].1 < 0.02);
-    }
-
-    #[test]
-    fn peaks_respect_the_requested_window() {
-        let samples: Vec<f32> = (0..1000).map(|i| if i < 500 { 0.5 } else { -0.5 }).collect();
-
-        let first = peaks(&samples, 1000.0, 0.0, 0.5, 10);
-        assert!(first.iter().all(|&(min, max)| min == 0.5 && max == 0.5));
-
-        let second = peaks(&samples, 1000.0, 0.5, 1.0, 10);
-        assert!(second.iter().all(|&(min, max)| min == -0.5 && max == -0.5));
-    }
-
-    #[test]
-    fn peaks_survive_degenerate_requests() {
-        let samples = vec![0.5f32; 100];
-        assert!(peaks(&[], 1000.0, 0.0, 1.0, 10).is_empty());
-        assert!(peaks(&samples, 1000.0, 0.0, 1.0, 0).is_empty());
-        assert!(peaks(&samples, 0.0, 0.0, 1.0, 10).is_empty());
-        assert!(peaks(&samples, 1000.0, 1.0, 0.0, 10).is_empty(), "reversed range");
-        assert!(peaks(&samples, 1000.0, 5.0, 6.0, 10).is_empty(), "past the end");
-
-        // More buckets than samples: a zoomed-in view is entitled to ask, and every
-        // bucket must still carry a value rather than the fold's sentinel.
-        let dense = peaks(&samples, 1000.0, 0.0, 0.1, 500);
-        assert_eq!(dense.len(), 500);
-        assert!(dense.iter().all(|&(min, max)| min == 0.5 && max == 0.5));
-    }
-
-    #[test]
-    fn a_chord_is_not_pretended_to_be_understood() {
-        // Three simultaneous pitches. The contract is that this yields a monophonic line
-        // — never three notes at once — because the UI promises one note at a time and
-        // silently returning a wrong chord would be worse than returning less.
-        let samples = (SAMPLE_RATE * 1.0) as usize;
-        let signal: Vec<f32> = (0..samples)
-            .map(|i| {
-                let t = i as f32 / SAMPLE_RATE as f32;
-                0.3 * ((2.0 * PI * 261.6 * t).sin()
-                    + (2.0 * PI * 329.6 * t).sin()
-                    + (2.0 * PI * 392.0 * t).sin())
-            })
-            .collect();
-
-        let result = transcribe(&signal, options());
-        let simultaneous = result
-            .notes()
-            .windows(2)
-            .filter(|pair| pair[0].start_ticks == pair[1].start_ticks)
-            .count();
-        assert_eq!(simultaneous, 0, "no two notes may start together");
-    }
-}
+mod tests;

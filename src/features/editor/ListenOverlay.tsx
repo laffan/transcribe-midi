@@ -7,8 +7,9 @@ interface ListenOverlayProps {
   title: string;
   /** Numbers about the take: length, notes, tempo. */
   stat?: ReactNode;
-  onClose: () => void;
-  closeLabel: string;
+  /** Omitted while the take is being read: there is nothing to go back to yet. */
+  onClose?: () => void;
+  closeLabel?: string;
   /** A body and a footer, supplied by whichever stage is running. */
   children: ReactNode;
 }
@@ -30,14 +31,16 @@ export function ListenOverlay({ title, stat, onClose, closeLabel, children }: Li
         <h2 className="listen__title truncate">{title}</h2>
         {stat && <span className="listen__stat mono">{stat}</span>}
         <div className="spacer" />
-        <button
-          className="btn btn--ghost btn--icon"
-          onClick={onClose}
-          aria-label={closeLabel}
-          title={closeLabel}
-        >
-          ✕
-        </button>
+        {onClose && (
+          <button
+            className="btn btn--ghost btn--icon"
+            onClick={onClose}
+            aria-label={closeLabel}
+            title={closeLabel}
+          >
+            ✕
+          </button>
+        )}
       </header>
 
       {children}

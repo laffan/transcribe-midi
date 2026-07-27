@@ -1756,3 +1756,211 @@ replace them, with a `source` of `midi` | `take` | `both`.
 - [ ] Add to track, then undo. One step.
 - [ ] Transcribe an audio *file* from the inspector — it should open the same overlay at
       the review stage.
+
+---
+
+## Six corrections to the listen flow
+
+All six came from using it. They divide into one thing that was hidden, three things the
+fine-tune stage could not do, and two keys that meant two things at once.
+
+### The wait was invisible, so it looked like a failure
+
+Pressing "Stop & transcribe" closed the overlay, left the editor on screen for several
+seconds, and then reopened the overlay with a result. Every part of that is wrong: the
+window that came back was not what you were doing, the gap read as a dropped take, and
+nothing said the machine was busy.
+
+The overlay now has a third stage between capture and review, and it does not close in
+between. The bar in it is **real** — `transcribe_reporting` takes a callback and the
+analysis publishes a fraction as it goes:
+
+- **The split is by cost, not by pipeline stage.** YIN over every frame is 65% of the
+  work and spectral flux is most of the rest, so those two get the bar between them; the
+  tempo estimate and the assembly are a pass each over one value per frame and finish
+  before the eye can see them. A bar apportioned by stage would sit at 40% for four
+  seconds.
+- **It reports every sixteenth frame, not every frame.** The callback crosses into an
+  atomic store; the caller may one day do more.
+- **A take too short to analyse still completes the bar**, or the overlay would sit at
+  zero forever on a take of nothing. There is a test for exactly that.
+- The progress lives in an `AtomicU32` in `AppState` rather than behind the capture lock,
+  because the analysis holds nothing while it runs and a progress read must not wait on
+  it.
+
+`transcribe` is now a wrapper over `transcribe_reporting` with an empty callback, and a
+test asserts the two produce identical transcriptions — a reporting path that changed the
+answer would be worse than no bar at all.
+
+### Two notes could sound at once, which the source could not have done
+
+A transcription is monophonic by construction: the segmenter walks one frame track, so
+its notes cannot overlap. Two things broke that afterwards. **Quantisation** rounds a
+start backwards and a length up to a whole grid step, and two sixteenths played slightly
+ahead of the beat land on top of each other. **Dragging** in the fine-tune stage can put a
+note anywhere at all.
+
+Either way the result is a lie about what was performed. `unplugged_core::monophony` is
+the rule, in one place:
+
+- A note running into the next attack is **cut there** — the later attack wins, which is
+  what a monophonic instrument does.
+- Two notes at the same instant leave **the longer one**. A short note on the same attack
+  is far more often an artefact than a real event, and the sort's tie-break is what
+  encodes that.
+- A note left with nothing is **dropped**, not kept at zero length, which is
+  unrepresentable in SMF anyway.
+
+It is applied after quantisation in the transcriber and in `capture_set_notes`, which is
+why that command now returns **the notes it kept** rather than a count: the editor must
+draw what Rust decided, or the next drag is computed against notes that no longer exist.
+The transcriber needs the same decision over `DetectedNote`, which carries the analysis
+behind each note, so the rule is also exposed as `flatten_indexed` — kept index and new
+duration — and a test asserts the two forms agree.
+
+### The dials were constants, and every one of them was a guess
+
+`MIN_CONFIDENCE`, `SILENCE_FLOOR`, `MIN_NOTE_FRAMES`, `PITCH_BREAK_SEMITONES` and the
+onset thresholds are all judgements about the source: how percussive it is, how steady the
+singer's pitch is, how much room is in the recording. The defaults suit a hummed line at a
+laptop. A plucked string or a breathy voice wants something else, and getting it wrong
+produces a *plausible* result rather than an obviously broken one — which is the case
+worth exposing rather than tuning once and hiding.
+
+`TranscribeTuning` carries the five, named for the symptom rather than the stage: nobody
+looking at a bad transcription thinks "the spectral flux threshold is too high", they
+think "it heard one note where I played two".
+
+- **One dial moves all three onset thresholds together**, multiplicatively:
+  `scale = 2^(1 - 2s)`. Monotone, nothing can cross zero, and `s = 0.5` reproduces
+  `OnsetParams::default()` *exactly* — tested, because a default that missed would
+  silently change what every take transcribes to.
+- **Rust clamps everything**, including NaN, which `f32::clamp` panics on. These arrive
+  from the webview; a minimum note of zero is not a crash, it is ten thousand notes, which
+  looks like a broken transcriber rather than a bad setting.
+- The tuning **comes back inside the preview**, so the controls open showing what actually
+  produced what is on screen, and it is carried to the next take — a setting you had to
+  find once should not need finding again.
+- Moving one **re-reads the take already in memory**. That is what retaining the audio was
+  for. Changes are sent on release rather than per pixel of a drag, because each one is
+  seconds of work.
+
+### Three things the fine-tune stage could not do
+
+**You could not hear what you were dragging.** Correcting a transcription is an ear job
+and the note under the cursor is the one being judged. It now sounds when grabbed, and
+again on each semitone crossed — on each semitone, not each pointer frame, or a drag is a
+siren.
+
+**Delete needed the mouse.** `⌫` and `Delete` now remove the selected note.
+
+**Join.** A held note the analysis broke in two — at a vibrato wobble, or a slur it read as
+an attack — is the single most common thing wrong with a result, and there was no way to
+put it back together. `J` is now bound in both places, with the semantics each one can
+support:
+
+- In the **piano roll**, where there is a marquee, it merges the whole selection into one
+  note spanning the first attack to the last release.
+- In the **fine-tune stage**, which selects one note at a time, it merges the selected
+  note into the one after it. Repeating the key walks along a note that came back in four
+  pieces. Adding a marquee there to make the two identical would be a bigger change than
+  the problem needs.
+
+Either way the **pitch of the earliest note wins**: the note you meant is the one that
+started, and the rest are fragments. The command is `Delete` + `Insert` in one
+transaction rather than a `Replace` plus a `Delete`, because a transaction's commands
+apply in order and indices in a later one would refer to a list the earlier one has
+already re-sorted. One undo step, tested.
+
+`J` is unmodified rather than `⌘J`, which is the window manager's on macOS — and because
+Join is an editing verb like Record and Listen, which are also bare letters here.
+
+### Two keys meant two things, and the loser depended on where focus was
+
+`L` was Listen and also D on the on-screen keyboard. `J` would have been Join and also B.
+`S` is a white key. Three separate `window` keydown listeners each guarded this ad hoc,
+and which one won was a question about focus rather than about intent.
+
+Typing on the piano is now **a mode**. While it is on, the letter keys play notes and
+every editor shortcut is suspended; while it is off, nothing is bound to the keyboard at
+all and the keys still work with the mouse. There is no in-between, because any clever
+arrangement would mean one of the two silently losing.
+
+- The listener is **not bound** unless the mode is on. Guarding inside the handler would
+  still swallow auto-repeat and `preventDefault` from keys the editor wanted.
+- **`Esc` leaves**, and is read before the mode's own suspension — otherwise the only way
+  back would be the mouse.
+- **Leaving releases whatever is held**, since the keyup handler goes with the mode that
+  was holding it.
+- The panel is **outlined while it is on**. "Why did Space stop playing?" needs an answer
+  on screen, not in a release note.
+- The mode holds but does not listen while the listen overlay is up, since the overlay
+  covers the keys.
+- `PianoRoll` takes a `shortcutsSuspended` prop rather than reaching for a module-level
+  flag. The editor owns the state and both modes feed it; a side channel here would be
+  the same mistake as a side channel to the backend.
+
+### What was verified
+
+- **341 Rust tests** (up from 315), clippy clean, `npm run build` clean, both Apple
+  targets compile-check.
+- New tests: the monophonic rule in seven cases including a quantisation pile-up; progress
+  monotone from zero to one, and one for a take too short to analyse; the default tuning
+  landing exactly on the onset parameters it replaced; each dial moving the result in the
+  direction it claims; nonsense dials clamped; join spanning, closing gaps, undoing as one
+  step, and surviving indices from a stale selection.
+- The confidence dial's test is against a signal with noise added by a small
+  deterministic LCG, because a synthetic sine satisfies any threshold and would have
+  proved nothing.
+- In the browser preview: typing mode on and off via `Esc`, the progress stage reporting a
+  real fraction with the overlay staying put, the five dials, and select → `J` → `⌫` in
+  the fine-tune stage. The mock was faked temporarily and reverted; `mockBackend.ts` still
+  refuses transcription on purpose.
+
+### Not verified — needs a Mac and a microphone
+
+1. **Whether the progress bar is smooth on a real take.** It has only run against a mock
+   that advances on a timer. The shape to watch for is a stall around 65%, which would
+   mean the flux stage costs more than the third of the bar it has been given.
+2. **Whether dragging by ear is pleasant.** The blip is the same 180 ms audition the piano
+   roll uses. On a fast drag across an octave that is twelve of them.
+3. **Whether the defaults are right.** Now that the dials exist, the interesting question
+   is which one a real bad result needs — that is a question for takes, not for tests.
+4. **Whether joining forwards is the right default in the fine-tune stage.** It is the
+   direction that fits "the analysis split this", but the first time it eats a note you
+   wanted, it is wrong.
+
+### What a human should test manually
+
+- [ ] Record a long take. The overlay stays up, the bar moves, and the review stage
+      arrives without the editor ever showing through.
+- [ ] Cancel during the wait — nothing is left running and no take is committed.
+- [ ] Drag a note up and down and confirm it sounds at each semitone, not continuously.
+- [ ] Drag one note on top of another. The result is still one note at a time, and the
+      picture matches what plays.
+- [ ] Select a note, `⌫`. Then select another and press `J` — it should swallow the one
+      after it.
+- [ ] Quantise a fast run to 1/16 and confirm nothing overlaps.
+- [ ] Open Analysis and pull "Split repeated notes" to each end. More notes one way,
+      fewer the other, and the take is never re-recorded.
+- [ ] Reset, and confirm the result matches what you first got.
+- [ ] In the roll: select several notes, press `J`, confirm one note from first attack to
+      last release, and that one undo puts them all back.
+- [ ] Turn Typing on. `L` plays a note instead of opening Listen; `Space` does nothing;
+      the panel is outlined. `Esc` gives everything back.
+- [ ] Hold a key, click Typing off with the mouse, and confirm the note stops.
+
+### Two files came off the debt register on the way past
+
+The 700-line rule says to split a file on the register when you touch it substantially,
+and two of these changes did:
+
+- **`command.rs`** (837 → 984 with the join command) is now a directory along the seam it
+  already had: `command/mod.rs` holds the session and its history, `command/edits.rs` the
+  gestures that were an inline `pub mod edits`, `command/tests.rs` the tests.
+- **`unplugged-transcribe/src/lib.rs`** (769 → 1089 with the tuning and the progress
+  callback) keeps the pipeline and sheds its tests to a sibling `tests.rs`.
+
+`PianoRoll.tsx` grew by seven lines — the `shortcutsSuspended` prop and its guard — and is
+still on the register at ~755. That is not a substantial touch and it was not split;
+saying so here is the alternative to pretending it did not happen.
