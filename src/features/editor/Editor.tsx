@@ -26,7 +26,6 @@ import { noteAt } from "./timeFormat";
 import { Toolbar } from "./Toolbar";
 import { TrackList } from "./TrackList";
 import { TranscribeEditor } from "./TranscribeEditor";
-import { Transport } from "./Transport";
 import { useTranscription } from "./useTranscription";
 import { useTransport } from "./useTransport";
 import "./Editor.css";
@@ -408,10 +407,24 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         onToggleKeyboard={() => setShowKeyboard((v) => !v)}
         showHistory={showHistory}
         onToggleHistory={() => setShowHistory((v) => !v)}
+        canUndo={editor.can_undo}
+        canRedo={editor.can_redo}
+        undoLabel={editor.undo_label}
+        redoLabel={editor.redo_label}
+        onUndo={doUndo}
+        onRedo={doRedo}
         playing={transport.playing}
         onPlay={() => void transport.play()}
         onPause={() => void transport.pause()}
         onStop={() => void transport.stop()}
+        recording={transport.recording}
+        onRecord={() => void transport.toggleRecord()}
+        listening={listen.listening}
+        onListen={listen.toggleListen}
+        loopRegion={transport.loopRegion}
+        onToggleLoop={() => void transport.toggleLoop()}
+        metronome={transport.metronome}
+        onToggleMetronome={() => void transport.toggleMetronome()}
         positionTicks={transport.positionTicks}
         ppq={manifest.ppq}
         timeSignature={manifest.time_signature}
@@ -419,6 +432,8 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         inCountIn={transport.inCountIn}
         notePitch={notePitch}
         onTempoChange={transport.changeTempo}
+        onPanic={() => void api.panic().catch(() => {})}
+        onSave={doSave}
         onOpenSettings={onOpenSettings}
         showConsole={showConsole}
         onToggleConsole={() => setShowConsole((v) => !v)}
@@ -509,28 +524,6 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
             onOpenSettings={onOpenSettings}
           />
         )}
-
-        <div className="editor__transport">
-          <Transport
-            recording={transport.recording}
-            loopRegion={transport.loopRegion}
-            metronome={transport.metronome}
-            dirty={editor.dirty}
-            canUndo={editor.can_undo}
-            canRedo={editor.can_redo}
-            undoLabel={editor.undo_label}
-            redoLabel={editor.redo_label}
-            onRecord={() => void transport.toggleRecord()}
-            listening={listen.listening}
-            onListen={listen.toggleListen}
-            onToggleLoop={() => void transport.toggleLoop()}
-            onToggleMetronome={() => void transport.toggleMetronome()}
-            onUndo={doUndo}
-            onRedo={doRedo}
-            onSave={doSave}
-            onPanic={() => void api.panic().catch(() => {})}
-          />
-        </div>
 
         {showKeyboard && (
           <div className="editor__keyboard">

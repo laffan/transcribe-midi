@@ -200,9 +200,14 @@
 
 /* --------------------------------------------------------------- bottom -- */
 
+/*
+ * What is left below the roll: the prompt bar and the keys. Both are surfaces you type
+ * into rather than press, which is why they are the two that did not move up to the
+ * toolbar with the rest of the controls.
+ */
 .editor__bottom {
   display: grid;
-  grid-template-rows: auto var(--h-transport) var(--h-keyboard);
+  grid-template-rows: auto var(--h-keyboard);
   border-top: 1px solid var(--border);
   background: var(--bg-1);
   flex-shrink: 0;
@@ -210,18 +215,14 @@
 
 /* An explicit row exists whether or not anything is in it, so the row goes too. */
 .editor--no-keyboard .editor__bottom {
-  grid-template-rows: auto var(--h-transport);
+  grid-template-rows: auto;
 }
 
-.editor__transport,
 .editor__keyboard {
   padding: var(--space-2) var(--space-3);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-}
-
-.editor__keyboard {
   border-top: 1px solid var(--border);
   background: var(--bg-2);
 }

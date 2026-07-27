@@ -13,10 +13,26 @@ interface ToolbarProps {
   showHistory: boolean;
   onToggleHistory: () => void;
 
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
+  onUndo: () => void;
+  onRedo: () => void;
+
   playing: boolean;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
+  recording: boolean;
+  onRecord: () => void;
+  /** Audio-to-MIDI capture. A peer of Record, not a panel. */
+  listening: boolean;
+  onListen: () => void;
+  loopRegion: [number, number] | null;
+  onToggleLoop: () => void;
+  metronome: boolean;
+  onToggleMetronome: () => void;
 
   positionTicks: number;
   ppq: number;
@@ -26,6 +42,8 @@ interface ToolbarProps {
   notePitch: number | null;
   onTempoChange: (bpm: number) => void;
 
+  onPanic: () => void;
+  onSave: () => void;
   onOpenSettings: () => void;
   showConsole: boolean;
   onToggleConsole: () => void;
@@ -34,13 +52,19 @@ interface ToolbarProps {
 }
 
 /**
- * The top-level controls: what is showing, what the transport is doing, what is open.
+ * Every top-level control, in one bar.
  *
- * Everything that is about the whole app rather than one note lives here, and the
- * transport lives here only. Play used to sit in the bottom bar beside Record and Listen,
- * which put "hear this project" in the same row as "make something new" — two different
- * kinds of action, and the reason the bottom bar kept growing. The bar below is now
- * exactly the ways notes come into being, plus what to do with the ones that exist.
+ * The bottom bar used to hold the transport; then it held what was left of it. Splitting
+ * the controls across two rows only ever answered "what was built when" — a user hunting
+ * for Loop does not know that it arrived with the transport rather than with the toolbar.
+ * So they are all here, sorted by what they do to the project:
+ *
+ * - **Left**: what is on screen, and the history you can walk back through.
+ * - **Centre**: the transport, everything that makes notes, and the clock they run on.
+ * - **Right**: what is open, and what happens to the result.
+ *
+ * What is left below the roll is the prompt bar and the keys — the two things you *type*
+ * into, which is a different kind of surface from a button.
  */
 export function Toolbar({
   projectName,
@@ -51,10 +75,24 @@ export function Toolbar({
   onToggleKeyboard,
   showHistory,
   onToggleHistory,
+  canUndo,
+  canRedo,
+  undoLabel,
+  redoLabel,
+  onUndo,
+  onRedo,
   playing,
   onPlay,
   onPause,
   onStop,
+  recording,
+  onRecord,
+  listening,
+  onListen,
+  loopRegion,
+  onToggleLoop,
+  metronome,
+  onToggleMetronome,
   positionTicks,
   ppq,
   timeSignature,
@@ -62,6 +100,8 @@ export function Toolbar({
   inCountIn,
   notePitch,
   onTempoChange,
+  onPanic,
+  onSave,
   onOpenSettings,
   showConsole,
   onToggleConsole,
@@ -79,6 +119,27 @@ export function Toolbar({
           {projectName}
           {dirty && <span className="toolbar__dirty" aria-label="Unsaved changes">•</span>}
         </span>
+
+        <div className="toolbar__group">
+          <button
+            className="btn btn--ghost btn--icon"
+            onClick={onUndo}
+            disabled={!canUndo}
+            aria-label="Undo"
+            title={undoLabel ? `Undo ${undoLabel} (⌘Z)` : "Nothing to undo"}
+          >
+            ↶
+          </button>
+          <button
+            className="btn btn--ghost btn--icon"
+            onClick={onRedo}
+            disabled={!canRedo}
+            aria-label="Redo"
+            title={redoLabel ? `Redo ${redoLabel} (⇧⌘Z)` : "Nothing to redo"}
+          >
+            ↷
+          </button>
+        </div>
 
         <div className="toolbar__group">
           <button
@@ -126,6 +187,46 @@ export function Toolbar({
             title="Stop and return to the start"
           >
             ⏹
+          </button>
+          <button
+            className={`btn btn--icon btn--transport ${recording ? "btn--recording" : ""}`}
+            onClick={onRecord}
+            aria-label={recording ? "Stop recording" : "Record"}
+            aria-pressed={recording}
+            title={recording ? "Stop recording (R)" : "Record MIDI (R)"}
+          >
+            ●
+          </button>
+          <button
+            className={`btn btn--listen ${listening ? "btn--listening" : ""}`}
+            onClick={onListen}
+            aria-pressed={listening}
+            title="Listen — turn audio into notes (L)"
+          >
+            Listen
+          </button>
+        </div>
+
+        <div className="toolbar__group">
+          <button
+            className={`btn btn--ghost ${loopRegion ? "btn--active" : ""}`}
+            onClick={onToggleLoop}
+            aria-pressed={loopRegion !== null}
+            title={
+              loopRegion
+                ? "Looping — click to turn off"
+                : "Loop the next two bars from the playhead"
+            }
+          >
+            Loop
+          </button>
+          <button
+            className={`btn btn--ghost ${metronome ? "btn--active" : ""}`}
+            onClick={onToggleMetronome}
+            aria-pressed={metronome}
+            title="Metronome"
+          >
+            Click
           </button>
         </div>
 
@@ -175,6 +276,24 @@ export function Toolbar({
             title="Settings"
           >
             ⚙
+          </button>
+        </div>
+
+        <div className="toolbar__group">
+          <button
+            className="btn btn--ghost"
+            onClick={onPanic}
+            title="Silence all notes — use if a note gets stuck"
+          >
+            Panic
+          </button>
+          <button
+            className={`btn ${dirty ? "btn--primary" : ""}`}
+            onClick={onSave}
+            disabled={!dirty}
+            title={dirty ? "Save the project (⌘S)" : "Nothing to save"}
+          >
+            {dirty ? "Save" : "Saved"}
           </button>
         </div>
       </div>

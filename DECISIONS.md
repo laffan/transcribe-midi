@@ -2056,3 +2056,65 @@ None of the Swift compiles here. In rough order of risk:
 - [ ] Clear the key in Settings, confirm the prompt bar offers "Set up AI" again.
 - [ ] In Keychain Access, confirm the item is now labelled "Unplugged — Anthropic API key"
       rather than only by its service.
+
+---
+
+## One bar, not two
+
+The last change split the controls by scope: the toolbar took what concerns the project,
+the bar under the roll kept what makes notes. That was a better rule than the one before
+it and still the wrong shape, because the split it produced was invisible. Someone hunting
+for Loop does not know it arrived with the transport rather than with the toolbar, and
+"which row is this in?" is a question about the project's history rather than about the
+work.
+
+So all of it is in the toolbar, arranged by what it does:
+
+- **Left** — what is on screen (Keys, History) and the history you can walk back through
+  (undo/redo, as icons: they are pressed by muscle memory and never read).
+- **Centre** — the transport, both ways of making notes (Record, Listen), Loop and Click,
+  and the clock they all run against.
+- **Right** — what is open (Import, Console, Settings) and what becomes of the result
+  (Panic, Save).
+
+`Transport.tsx` is gone rather than reduced to a wrapper. What is left below the roll is
+the prompt bar and the keys — the two surfaces you *type* into, which is a different kind
+of thing from a button, and the reason those two did not follow the rest up. The roll
+gained the ~56px the transport row was holding.
+
+### The bar has to give way in a defined order
+
+Everything in one row is a lot of row. Rather than let whatever happens to be last get
+clipped, the order is set and it drops what is repeated or inferable elsewhere first:
+
+| Below | Goes | Because |
+|---|---|---|
+| 1500px | the project name | it is also in the picker, and this bar is for controls |
+| 1460px | the build stamp | "is this my fix?" is not a small-window question — and a 1440 window, the common one, should have slack rather than fit exactly |
+| 1180px | the time signature | the clock keeps bar·beat and tempo, which is what is read while playing |
+| 1040px | *nothing* | the bar becomes two rows: transport centred above, the rest split beneath |
+
+Two rows rather than a scrolling bar because a control you have to scroll to is a control
+you will not find. The editor's toolbar row is `auto`, so the layout below simply starts
+lower; `--h-transport` is gone from the tokens, since nothing has a fixed height here any
+more.
+
+### What was verified
+
+- Measured at 1600, 1440, 1200 and 1000 px in the browser preview: nothing clipped
+  (`scrollWidth === clientWidth` at every width), and Listen, Loop, Click, Panic, Undo,
+  Redo, Import and Console all present and visible at each. The 1000px case wraps to two
+  rows at 89px tall.
+- Hiding the keys leaves no empty row behind — the bottom bar collapses to the prompt bar
+  and ends flush with the window.
+- 343 Rust tests, clippy clean, `npm run build` clean, both Apple targets compile-check.
+
+### What a human should test manually
+
+- [ ] Record, Listen, Loop and Click all work from the toolbar exactly as they did below.
+- [ ] Undo/redo icons: hover shows what will be undone, and they grey out with nothing to
+      undo.
+- [ ] Save still lights up when the project is dirty, and Panic still silences a stuck
+      note.
+- [ ] Resize the window down past 1040px and confirm the bar splits into two rows rather
+      than losing a control.

@@ -126,9 +126,9 @@
   --transition-fast: 90ms ease;
   --transition-med: 160ms ease;
 
-  /* Fixed chrome heights, referenced by the editor grid. */
+  /* Fixed chrome heights, referenced by the editor grid. The toolbar sizes itself:
+     it wraps to two rows in a narrow window, so a fixed height would clip it. */
   --h-titlebar: 40px;
-  --h-transport: 56px;
   --h-keyboard: 116px;
   --h-console: 132px;
   --w-inspector: 296px;

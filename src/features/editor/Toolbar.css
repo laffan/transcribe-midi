@@ -73,6 +73,44 @@
   font-size: var(--text-md);
 }
 
+/* Record reads red when armed — and pulses, because a transport that is silently
+   recording is a way to lose a take. */
+.btn--recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  animation: toolbar-record-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes toolbar-record-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn--recording {
+    animation: none;
+  }
+}
+
+/*
+ * Listen sits beside Record because it is the peer of Record in this app, not a lesser
+ * thing behind a panel — turning audio into notes is one of the two features the whole
+ * app is for. Labelled rather than an icon: there is no established glyph for it, and a
+ * mystery circle next to the record dot would read as a second record button.
+ */
+.btn--listen {
+  height: 34px;
+  white-space: nowrap;
+}
+
+.btn--listening {
+  background: var(--diff-added);
+  border-color: var(--diff-added);
+  color: var(--text-inverse);
+}
+
 /* ----------------------------------------------------------------- clock -- */
 
 .clock {
@@ -189,20 +227,29 @@
 
 /* ---------------------------------------------------------------- narrow -- */
 
-@media (max-width: 1100px) {
-  /* The project's name is the first thing that can go: it is also in the picker, and
-     the toolbar's job is the controls. */
+/*
+ * Everything is in this bar now, so it has to give way in a defined order rather than
+ * clip whatever happens to be last. What goes first is what is repeated or inferable
+ * elsewhere; the transport and the clock never move.
+ */
+
+/* The project's name is also in the picker, and the toolbar's job is the controls. */
+@media (max-width: 1500px) {
   .toolbar__project {
     display: none;
   }
 }
 
-@media (max-width: 900px) {
-  .toolbar {
-    grid-template-columns: auto 1fr auto;
+/* The build stamp matters when you are asking "is this my fix?", which is not a thing
+   you do in a small window. It goes early enough that a 1440-wide window — the common
+   one — has slack rather than fitting exactly. */
+@media (max-width: 1460px) {
+  .toolbar__build {
+    display: none;
   }
+}
 
-  .toolbar__build,
+@media (max-width: 1180px) {
   .clock__sig {
     display: none;
   }
@@ -213,5 +260,34 @@
 
   .clock__value {
     font-size: var(--text-md);
+  }
+}
+
+/*
+ * Below this nothing more can be dropped without losing a control, so the bar becomes
+ * two rows: the transport centred on its own, the rest split beneath it. The editor's
+ * toolbar row is `auto`, so the layout below simply starts lower.
+ */
+@media (max-width: 1040px) {
+  .toolbar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "centre centre"
+      "left right";
+    row-gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .toolbar__centre {
+    grid-area: centre;
+    justify-content: center;
+  }
+
+  .toolbar__side {
+    grid-area: left;
+  }
+
+  .toolbar__side--end {
+    grid-area: right;
   }
 }
