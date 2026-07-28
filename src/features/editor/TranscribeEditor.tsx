@@ -20,18 +20,23 @@ import {
   type Drag,
   type Scale,
 } from "./transcribeGeometry";
-import { TuningDials } from "./TuningDials";
+import { sameTuning, TuningDials } from "./TuningDials";
 import { useAudition } from "./useAudition";
 import "./TranscribeEditor.css";
 
 interface TranscribeEditorProps {
   preview: TranscriptionPreview;
   ppq: number;
-  onChange: (preview: TranscriptionPreview) => void;
   onApply: () => void;
   onDiscard: () => void;
   /** Sound a pitch briefly. What makes dragging a note something you can do by ear. */
   onPreviewNote: (pitch: number) => void;
+  /**
+   * Read the take again. Owned by the parent because it swaps this view for the progress
+   * stage while it runs — seconds of analysis behind a frozen picture of the old result
+   * is the thing this replaced.
+   */
+  onReprocess: (useProjectTempo: boolean, quantizeTicks: number, tuning: TranscribeTuning) => void;
 }
 
 const GRIDS: { label: string; divisor: number }[] = [
@@ -61,10 +66,10 @@ const SOURCES: { value: AuditionSource; label: string; title: string }[] = [
 export function TranscribeEditor({
   preview,
   ppq,
-  onChange,
   onApply,
   onDiscard,
   onPreviewNote,
+  onReprocess,
 }: TranscribeEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,7 +78,8 @@ export function TranscribeEditor({
   const [notes, setNotes] = useState<Note[]>(() => preview.notes.map((n) => n.note));
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag>({ type: "none" });
-  const [busy, setBusy] = useState(false);
+  /** Where the dials are, which is not where the result on screen came from. */
+  const [draft, setDraft] = useState<TranscribeTuning>(preview.tuning);
   /** The last pitch sounded by a drag, so a semitone step blips once and not per frame. */
   const auditioned = useRef<number | null>(null);
 
@@ -88,7 +94,14 @@ export function TranscribeEditor({
 
   const scale: Scale = useMemo(() => {
     const range = pitchRangeOf(notes, analysis);
-    return { ...size, duration, ticksPerSecond, low: range.low, high: range.high };
+    return {
+      ...size,
+      duration,
+      ticksPerSecond,
+      low: range.low,
+      high: range.high,
+      laneTop: WAVE_HEIGHT,
+    };
   }, [size, duration, ticksPerSecond, notes, analysis]);
 
   // -- sizing --------------------------------------------------------------
@@ -109,6 +122,8 @@ export function TranscribeEditor({
   useEffect(() => {
     setNotes(preview.notes.map((n) => n.note));
     setSelected(null);
+    // A fresh analysis answers with the tuning it actually used, including any clamping.
+    setDraft(preview.tuning);
   }, [preview]);
 
   // -- waveform ------------------------------------------------------------
@@ -265,23 +280,6 @@ export function TranscribeEditor({
     }
   }, []);
 
-  async function rederive(
-    useProjectTempo: boolean,
-    quantizeTicks: number,
-    tuning: TranscribeTuning,
-  ) {
-    setBusy(true);
-    try {
-      // The take is still here, so this re-reads it rather than asking for another
-      // performance — which is the whole reason the audio is retained.
-      onChange(await api.captureRetranscribe(useProjectTempo, quantizeTicks, tuning));
-    } catch (e) {
-      logger.error("Could not re-read the take", errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function deleteSelected() {
     if (selected === null) return;
     const next = notes.filter((_, index) => index !== selected);
@@ -327,6 +325,17 @@ export function TranscribeEditor({
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />
+
+        {/* Over the result rather than beside the dials: what it acts on is what you are
+            looking at, and the answer to "why has nothing changed?" should be in view. */}
+        {!sameTuning(draft, preview.tuning) && (
+          <button
+            className="btn btn--primary btn--lg tedit__reprocess"
+            onClick={() => onReprocess(preview.use_project_tempo, preview.quantize_ticks, draft)}
+          >
+            ↻ Re-process with these settings
+          </button>
+        )}
       </div>
 
       <footer className="listen__actions tedit__controls">
@@ -362,13 +371,13 @@ export function TranscribeEditor({
             <select
               className="input"
               value={gridDivisor}
-              disabled={busy}
+              
               onChange={(e) => {
                 const divisor = Number(e.target.value);
-                void rederive(
+                onReprocess(
                   preview.use_project_tempo,
                   divisor === 0 ? 0 : Math.round(ppq / divisor),
-                  preview.tuning,
+                  draft,
                 );
               }}
             >
@@ -384,10 +393,8 @@ export function TranscribeEditor({
             <input
               type="checkbox"
               checked={preview.use_project_tempo}
-              disabled={busy}
-              onChange={(e) =>
-                void rederive(e.target.checked, preview.quantize_ticks, preview.tuning)
-              }
+              
+              onChange={(e) => onReprocess(e.target.checked, preview.quantize_ticks, draft)}
             />
             <span>Use the project tempo</span>
           </label>
@@ -424,11 +431,10 @@ export function TranscribeEditor({
         </div>
 
         <TuningDials
-          tuning={preview.tuning}
-          disabled={busy}
-          onCommit={(tuning) =>
-            void rederive(preview.use_project_tempo, preview.quantize_ticks, tuning)
-          }
+          draft={draft}
+          applied={preview.tuning}
+          disabled={false}
+          onChange={setDraft}
         />
       </footer>
     </>

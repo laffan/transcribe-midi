@@ -196,13 +196,27 @@ export interface PlatformCapabilities {
 
 // --- AI (phase 6) ----------------------------------------------------------
 
+/**
+ * Which service answers a described edit. Mirrors `Provider` in `unplugged-ai`.
+ *
+ * `lm_studio` is named for the server this was built against rather than "local",
+ * because what it can do depends on the server — a model with no tool support will not
+ * work here however local it is.
+ */
+export type AiProvider = "anthropic" | "lm_studio";
+
 export interface AiStatus {
   has_key: boolean;
   /** Last four characters. The key itself never crosses this boundary. */
   key_hint: string | null;
   /** False on a build without a Keychain, where the key lasts until the app quits. */
   key_persists: boolean;
+  provider: AiProvider;
+  /** The model for the provider in use, not whichever was configured last. */
   model: string | null;
+  local_url: string;
+  /** False while the chosen provider is still missing a key or a model. */
+  ready: boolean;
 }
 
 export interface ModelInfo {
@@ -252,6 +266,19 @@ export interface AiProposal {
   steps: ToolStep[];
   usage: Usage;
   truncated: boolean;
+  summary: string;
+  empty: boolean;
+}
+
+/**
+ * What changes when the proposed notes are adjusted by hand.
+ *
+ * Only the parts that can change: the narration, the steps and the token counts describe
+ * how the proposal was arrived at, and moving a note does not revise history.
+ */
+export interface AiEdit {
+  diff: NoteDiff;
+  preview_notes: Note[];
   summary: string;
   empty: boolean;
 }

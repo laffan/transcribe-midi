@@ -201,7 +201,7 @@ fn release(state: &AppState, track: u16, held: &[(u8, u8)]) {
 /// the sampler is silent, so "Both" would otherwise be an error on a machine where the
 /// notes are still perfectly reviewable on screen.
 #[tauri::command]
-pub fn capture_audition_play(
+pub fn audition_take(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     from_seconds: f64,
@@ -276,8 +276,53 @@ pub fn capture_audition_play(
     }
 }
 
+/// Play the notes a described edit is offering.
+///
+/// The same reasoning as auditioning a transcription, arrived at from the other side: you
+/// are being asked to accept notes you did not play, and looking at them on a grid is not
+/// how anyone decides whether a line is right. There is no recording to compare against
+/// here — the notes are all there is — so this has no source to choose.
 #[tauri::command]
-pub fn capture_audition_stop(state: State<'_, AppState>) -> CommandResult<()> {
+pub fn audition_notes(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    from_seconds: f64,
+) -> CommandResult<()> {
+    let from_seconds = from_seconds.max(0.0);
+    state.audition.stop();
+    state.preview.stop();
+
+    let (notes, track) = {
+        let guard = state
+            .pending_ai
+            .lock()
+            .map_err(|_| CommandError::from("the proposal lock was poisoned".to_string()))?;
+        let pending = guard
+            .as_ref()
+            .ok_or_else(|| CommandError::from("there is no proposal to play".to_string()))?;
+        (pending.preview.clone(), pending.track)
+    };
+
+    let (ppq, tempo_bpm, tracks) = project_timing(&state)?;
+    let ticks_per_second = (tempo_bpm / 60.0) * f64::from(ppq);
+    let events = schedule(&notes, ticks_per_second, from_seconds);
+
+    if events.is_empty() {
+        return Err(CommandError::from("there are no notes to play".to_string()));
+    }
+
+    // A proposal aimed at a new track has no voice of its own yet — the track is created
+    // at accept time, not before — so it is auditioned on the last one that exists.
+    let voice = track.min(tracks.saturating_sub(1));
+    let until = span_seconds(&notes, ticks_per_second);
+    state
+        .audition
+        .play(&app, voice as u16, events, from_seconds, until);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn audition_stop(state: State<'_, AppState>) -> CommandResult<()> {
     state.audition.stop();
     state.preview.stop();
     Ok(())
@@ -288,18 +333,23 @@ pub fn capture_audition_stop(state: State<'_, AppState>) -> CommandResult<()> {
 /// The recording's own clock wins when it is playing: it is a sample clock, and when both
 /// sources are running it is the one the ear is following.
 #[tauri::command]
-pub fn capture_audition_position(state: State<'_, AppState>) -> CommandResult<Option<f64>> {
+pub fn audition_position(state: State<'_, AppState>) -> CommandResult<Option<f64>> {
     Ok(state.preview.position().or_else(|| state.audition.position()))
 }
 
 fn project_ppq(state: &AppState) -> CommandResult<u16> {
+    Ok(project_timing(state)?.0)
+}
+
+/// PPQ, tempo and track count, in one lock.
+fn project_timing(state: &AppState) -> CommandResult<(u16, f64, usize)> {
     let guard = state
         .open
         .lock()
         .map_err(|_| CommandError::from("the editor state lock was poisoned".to_string()))?;
     guard
         .as_ref()
-        .map(|open| open.manifest.ppq)
+        .map(|open| (open.manifest.ppq, open.manifest.tempo_bpm, open.tracks().len()))
         .ok_or_else(|| CommandError::from("no project is open".to_string()))
 }
 

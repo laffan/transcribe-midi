@@ -17,7 +17,7 @@ const POLL_MS = 50;
  * Rust owns both players and answers one position for whichever is running, so nothing
  * here has to know which one made the sound.
  */
-export function useAudition() {
+export function useAudition(kind: "take" | "notes" = "take") {
   const [source, setSource] = useState<AuditionSource>("midi");
   const [playhead, setPlayhead] = useState<number | null>(null);
   /** Read by the source switch, which restarts playback from wherever it had reached. */
@@ -31,15 +31,19 @@ export function useAudition() {
 
   const playFrom = useCallback(
     async (seconds: number, using?: AuditionSource) => {
+      const from = Math.max(0, seconds);
       try {
-        await api.auditionPlay(Math.max(0, seconds), using ?? source);
-        setPlayhead(Math.max(0, seconds));
+        // A proposal has no recording behind it, so there is no source to choose — the
+        // notes are all there is.
+        if (kind === "notes") await api.auditionNotes(from);
+        else await api.auditionTake(from, using ?? source);
+        setPlayhead(from);
       } catch (error) {
         logger.error("Could not play that back", errorMessage(error));
         setPlayhead(null);
       }
     },
-    [source],
+    [kind, source],
   );
 
   /** Switch source. Playing when it happens means playing on, from the same place. */

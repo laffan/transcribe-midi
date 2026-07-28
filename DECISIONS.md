@@ -2118,3 +2118,166 @@ more.
       note.
 - [ ] Resize the window down past 1040px and confirm the bar splits into two rows rather
       than losing a control.
+
+---
+
+## Five corrections, and a second place to ask
+
+### The dials re-processed on every touch
+
+Each dial release re-read the whole take. Moving three of them on the way to a setting
+meant three passes of the analysis, each one seconds long, each one replacing the picture
+you were using to judge the last. The dials now move a **draft**, and a button appears
+over the editor when the draft has left what produced what is on screen.
+
+Over the editor rather than beside the dials, and only when there is something to do: its
+presence *is* the message that a change is pending, and what it would replace is the thing
+you are looking at while you decide.
+
+**Every re-derivation now shows the progress stage**, not just the first one. It is the
+same pipeline over the same samples and takes the same seconds; leaving the old result
+frozen on screen with no sign of work was the same lie the closed overlay used to tell.
+That meant lifting the re-read out of `TranscribeEditor` into the hook, because the
+component cannot swap itself for the progress view.
+
+Snap-to and the project-tempo checkbox stay immediate. They are a single decision each
+rather than a knob you converge on, and putting them behind the same button would be
+ceremony.
+
+### A described edit could be looked at and nothing else
+
+The asymmetry was stark: a sung line got a full window with playback and drag editing, and
+notes written *by a model* — the ones you have least reason to trust — got a diff on the
+roll, Apply, and Discard. "Nearly right" meant throwing the whole thing away and prompting
+again.
+
+`ProposalEditor` is the transcription editor's interaction with the waveform taken away:
+drag to move, edges to resize, `⌫` to remove, space to play, click the background to play
+from there. Dragging sounds the pitch, as it does in the other editor.
+
+- **The geometry is shared, the drawing is not.** `Scale` gained a `laneTop` — the note
+  lane starts under the waveform there and at the top here — and `proposalDraw` is a
+  sibling of `transcribeDraw` rather than a flag inside it. The two have nothing in common
+  below the note rectangles: no waveform, no pitch line, no onsets, and one function
+  drawing both would be mostly branches.
+- **What is already on the track is drawn underneath, dimmed.** "Added a third above"
+  should be visible rather than inferred.
+- **Adjustments go to Rust**, which validates them and re-derives its own diff — the one
+  that came with the proposal describes the model's work, and after a drag that is no
+  longer what is on offer.
+- **An adjusted proposal applies as a replacement.** The model's transaction is a minimal
+  diff against notes the user has since moved; `Delete` the base and `Insert` what is on
+  offer is coarser, correct, and still one undo step. Unedited proposals keep the original
+  transaction, so nothing about the existing path changes.
+- `NoteDiff` moved out of `ai.rs` into `core::diff` on the way, with a `between(before,
+  after)` that the hand-edit path needed. Nothing about a note diff is the model's, and
+  the move shrinks the worst file on the debt register instead of growing it.
+
+Notes are matched on **pitch and start tick**. A note in the same place at the same pitch
+is the same note however its length changed; a note dragged elsewhere reads as one
+arriving and one leaving, because nothing in a note list could say otherwise — they are
+re-sorted on every edit and have no stable id.
+
+### Nothing stopped you editing under a request
+
+A proposal is a transaction against the notes as they were when it was asked for. Edit
+underneath it and the answer arrives stale, which Rust correctly refuses — so the wait was
+for nothing, and nothing had said not to. The thinking stage covers the editor for the
+duration, which turns an unstated rule into an obvious one.
+
+Its bar is **indeterminate on purpose**: a tool loop takes as many turns as it takes, and a
+bar that guessed would be a bar that lied. "Stop waiting" sets a flag rather than
+cancelling the request — the HTTP call cannot be taken back — and rejects the proposal if
+it arrives, so Rust is not left holding a transaction nobody is going to decide about.
+
+### A second place to ask
+
+The loop built Anthropic JSON directly, which was right with one provider and wrong with
+two. It now speaks in `Turn`s and a provider serialises them:
+
+| | Anthropic | OpenAI-compatible |
+|---|---|---|
+| System prompt | top-level field | a message with `role: "system"` |
+| Tools | `{name, description, input_schema}` | `{type: "function", function: {…, parameters}}` |
+| Tool arguments | an object | **a JSON string** |
+| Tool results | blocks inside a user message | one message each, `role: "tool"` |
+
+The one thing deliberately *not* normalised is the assistant's own reply. It goes back as
+an opaque echo, because Anthropic's thinking blocks carry signatures that any
+reconstruction would invalidate — and because some local servers are strict about the
+`tool_calls` they see echoed. The loop carries it and never looks inside.
+
+Judgement calls worth recording:
+
+- **It is called LM Studio, not "local".** What it can do depends on the server: a model
+  without tool calling will answer in prose and change nothing, and naming the feature
+  after the thing it was built against sets a truer expectation than "local models" would.
+- **No placeholder key.** A local server does not want one, and sending `sk-none` to
+  something that *does* check would be worse than sending nothing.
+- **Unparseable tool arguments do not end the conversation.** Local models emit malformed
+  JSON often enough that it has to be recoverable: an empty object reaches the tool, the
+  tool says what was wrong, and the model gets a chance to fix it — the same mechanism that
+  makes "1/7 is not a note value" survivable.
+- **A model is remembered per provider.** A local model id means nothing to Anthropic;
+  switching back and forth should not lose either choice.
+- **The base URL is normalised.** People paste what LM Studio shows them, which is
+  sometimes `http://localhost:1234`, sometimes with `/v1`, often with a trailing slash. All
+  three work rather than producing a 404 to guess at.
+- **No default model is guessed locally.** Anthropic's list is ordered and "newest Sonnet"
+  is meaningful; which of your local models is best for this is not something a name can
+  tell us, so it takes the first and lets you choose.
+
+The transport moved to `http.rs`, shared by both. It is still Apple-only for the reason it
+always was — `rustls` would need a C compiler for the Apple targets and cost us the
+cross-compile check — which does mean **LM Studio only works on the Apple build**, even
+though nothing about a local server requires it.
+
+### The settings icon
+
+12px, inherited from the button's text size, in a row of words. Now 20px, sized to the row
+rather than to the type.
+
+### What was verified
+
+- **367 Rust tests** (up from 343), clippy clean, `npm run build` clean, both Apple targets
+  compile-check.
+- New tests: the OpenAI dialect end to end (system prompt leading, one message per tool
+  result, tools rewrapped with the schema renamed, arguments as a string, as an object, and
+  malformed); URL normalisation in the four forms people paste; provider defaults; the note
+  diff in six cases including duplicates at one place; preferences round-tripping and a
+  settings file written before providers existed still loading.
+- In the browser preview: the provider picker and the server-address field, the re-process
+  button appearing only when the dials move and putting the progress stage up when pressed,
+  the thinking overlay, and the proposal editor with its narration and counts. The mock was
+  faked temporarily and reverted.
+
+### Not verified — needs a Mac and LM Studio
+
+1. **Whether a local model can actually drive this.** The tool surface is large and the
+   prompt is long. A small model may call tools with plausible nonsense, or narrate instead
+   of calling them. `tool_choice: "auto"` is set for that reason, but the honest answer is
+   that this needs trying against a real 7B–30B model.
+2. **Whether LM Studio's `/v1/models` shape matches.** Read as `data[].id`, which is the
+   OpenAI shape it documents.
+3. **Whether a plain-HTTP request through the `ureq` agent works**, given the agent is
+   configured with a TLS provider. It should ignore it for `http://`.
+4. **Whether an adjusted proposal applies cleanly**, particularly a new-track one, where
+   the base is empty and the replacement is a bare insert.
+
+### What a human should test manually
+
+- [ ] Move a dial: the result does not change until Re-process is pressed, and pressing it
+      shows the bar.
+- [ ] Change Snap-to: that still re-reads immediately, with the bar.
+- [ ] Reset returns the dials to the defaults, and the "adjusted" badge clears once
+      re-processed.
+- [ ] Describe an edit. The editor is covered while it thinks; the prompt is quoted back.
+- [ ] Press Stop waiting mid-request and confirm nothing lands when the answer arrives.
+- [ ] On the proposal: press Play — the suggestion sounds on the sampler. Drag a note and
+      confirm it sounds as it moves. `⌫` removes one. Apply, then undo: one step.
+- [ ] Close the proposal with ✕ and reopen it from "Hear & edit…" in the review bar.
+- [ ] Settings → AI → LM Studio, with the server running: the model list populates. Pick
+      one, describe an edit, and confirm it comes back with notes rather than prose.
+- [ ] Point it at a wrong port and confirm the error names the connection rather than
+      failing silently.
+- [ ] Switch back to Anthropic and confirm the model you had is still selected.

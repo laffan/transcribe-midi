@@ -9,6 +9,20 @@
   cursor: crosshair;
 }
 
+/*
+ * Floats over the result it would replace. Appears only when the dials have moved away
+ * from what produced what is on screen, so its presence *is* the message that there is
+ * something pending.
+ */
+.tedit__reprocess {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  box-shadow: var(--shadow-modal);
+}
+
 .tedit__controls {
   flex-direction: column;
   align-items: stretch;

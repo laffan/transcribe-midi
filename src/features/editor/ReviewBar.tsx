@@ -7,7 +7,7 @@ interface ReviewBarProps {
   pending: Pending;
   onApply: () => void;
   onDiscard: () => void;
-  /** Open the waveform editor. Only offered for a transcription. */
+  /** Reopen the full-window editor for whichever kind of result this is. */
   onFineTune: () => void;
 }
 
@@ -81,9 +81,14 @@ export function ReviewBar({ pending, onApply, onDiscard, onFineTune }: ReviewBar
             {proposal.usage.output_tokens.toLocaleString()} out
           </span>
           {!proposal.empty && (
-            <button className="btn btn--primary" onClick={onApply}>
-              Apply
-            </button>
+            <>
+              <button className="btn" onClick={onFineTune}>
+                Hear &amp; edit…
+              </button>
+              <button className="btn btn--primary" onClick={onApply}>
+                Apply
+              </button>
+            </>
           )}
           <button className="btn" onClick={onDiscard}>
             {proposal.empty ? "Dismiss" : "Discard"}
@@ -123,7 +128,7 @@ export function ReviewBar({ pending, onApply, onDiscard, onFineTune }: ReviewBar
 
       <div className="review__actions">
         <button className="btn" onClick={onFineTune}>
-          Fine-tune…
+          Hear &amp; edit…
         </button>
         {preview.notes.length > 0 && (
           <button className="btn btn--primary" onClick={onApply}>

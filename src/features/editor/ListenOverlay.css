@@ -122,6 +122,68 @@
   color: var(--text-1);
 }
 
+/* Nothing honest to measure, so it sweeps rather than fills. */
+.working__fill--indeterminate {
+  width: 35%;
+  animation: working-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes working-sweep {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working__fill--indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+.thinking__prompt {
+  font-size: var(--text-md);
+  color: var(--text-1);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------------- proposal -- */
+
+.proposal__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.proposal__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.proposal__swatch--offer {
+  background: var(--diff-added);
+}
+
+.proposal__swatch--base {
+  background: var(--text-2);
+  opacity: 0.45;
+  margin-left: var(--space-2);
+}
+
+.proposal__narration {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
 /* --------------------------------------------------------------- actions -- */
 
 .listen__actions {

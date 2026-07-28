@@ -19,7 +19,7 @@ use unplugged_core::ai::{AiContext, NoteDiff};
 use unplugged_core::command::Transaction;
 use unplugged_core::music::Key;
 use unplugged_core::Note;
-use unplugged_ai::{keychain, EditRequest, ModelInfo, ToolStep, Usage};
+use unplugged_ai::{keychain, EditRequest, Endpoint, ModelInfo, Provider, ToolStep, Usage};
 
 use crate::editor::EditorState;
 use crate::error::{CommandError, CommandResult};
@@ -48,20 +48,58 @@ pub struct PendingProposal {
     /// a recorded take — would make it apply to the wrong notes. Comparing against this
     /// turns that from silent corruption into a refusal.
     pub base: Vec<Note>,
+    /// The notes on offer: what the track would become. Held here, not only sent to the
+    /// frontend, because they are what plays when the proposal is auditioned and what a
+    /// hand adjustment replaces.
+    pub preview: Vec<Note>,
+    /// True once the user has moved something. The model's own transaction is a minimal
+    /// diff and is kept while it is still accurate; an adjusted proposal no longer
+    /// matches it and is applied as a replacement instead.
+    pub edited: bool,
 }
 
 // ---------------------------------------------------------------------------
 // Preferences
 // ---------------------------------------------------------------------------
 
-/// The model choice. Not a secret, so it lives in a plain file next to the projects.
+/// Which service, which model, and where it lives. Not secret, so it is a plain file
+/// next to the projects — the key is the only thing here that belongs in the Keychain,
+/// and it is not here.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AiPreferences {
     #[serde(default)]
+    pub provider: Provider,
+    /// The model chosen for each provider, kept apart: a local model id means nothing to
+    /// Anthropic, and switching back and forth should not lose either choice.
+    #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub local_model: Option<String>,
+    /// Where the local server is. Empty means the LM Studio default.
+    #[serde(default)]
+    pub local_url: String,
 }
 
 impl AiPreferences {
+    /// The model for the provider in use.
+    fn current_model(&self) -> Option<String> {
+        match self.provider {
+            Provider::Anthropic => self.model.clone(),
+            Provider::LmStudio => self.local_model.clone(),
+        }
+    }
+
+    fn set_current_model(&mut self, model: String) {
+        match self.provider {
+            Provider::Anthropic => self.model = Some(model),
+            Provider::LmStudio => self.local_model = Some(model),
+        }
+    }
+
+    fn base_url(&self) -> String {
+        unplugged_ai::provider::normalise(&self.local_url)
+    }
+
     fn path(data_dir: &Path) -> PathBuf {
         data_dir.join("ai.json")
     }
@@ -93,20 +131,58 @@ pub struct AiStatus {
     pub key_hint: Option<String>,
     /// False on a build with no Keychain, where a key lasts until the app quits.
     pub key_persists: bool,
+    pub provider: Provider,
+    /// The model for the provider in use, not for whichever was configured last.
     pub model: Option<String>,
+    pub local_url: String,
+    /// False when the chosen provider still needs something before it can be asked:
+    /// a key for Anthropic, a reachable server for LM Studio.
+    pub ready: bool,
 }
 
 fn status(state: &AppState) -> AiStatus {
+    let prefs = state.ai_prefs.lock().ok();
+    let (provider, model, local_url) = prefs
+        .as_ref()
+        .map(|p| (p.provider, p.current_model(), p.base_url()))
+        .unwrap_or_default();
+
+    let has_key = keychain::has_api_key();
     AiStatus {
-        has_key: keychain::has_api_key(),
+        has_key,
         key_hint: keychain::key_hint(),
         key_persists: keychain::is_persistent(),
-        model: state
+        provider,
+        // A local provider is ready as soon as a model is picked; whether the server is
+        // actually up is answered by asking it, not by guessing here.
+        ready: model.is_some() && (!provider.needs_api_key() || has_key),
+        model,
+        local_url,
+    }
+}
+
+/// The endpoint for the provider in use, with the key read only if one is needed.
+///
+/// This is the *only* place outside a request that touches the Keychain, and it is
+/// immediately before one.
+fn endpoint(state: &AppState) -> CommandResult<(Endpoint, Option<String>)> {
+    let (provider, model, base_url) = {
+        let prefs = state
             .ai_prefs
             .lock()
-            .ok()
-            .and_then(|prefs| prefs.model.clone()),
-    }
+            .map_err(|_| CommandError::from("the AI settings lock was poisoned".to_string()))?;
+        (prefs.provider, prefs.current_model(), prefs.base_url())
+    };
+
+    let endpoint = match provider {
+        Provider::Anthropic => Endpoint::anthropic(keychain::api_key().map_err(|_| CommandError {
+            code: "no_key",
+            message: "add an Anthropic API key in Settings → AI first".to_string(),
+        })?),
+        Provider::LmStudio => Endpoint::lm_studio(base_url),
+    };
+
+    Ok((endpoint, model))
 }
 
 #[tauri::command]
@@ -135,10 +211,12 @@ pub async fn ai_set_key(
     let default = unplugged_ai::anthropic::default_model(&models);
 
     if let Ok(mut prefs) = state.ai_prefs.lock() {
+        // Entering a key is a statement about which provider you mean.
+        prefs.provider = Provider::Anthropic;
         if prefs.model.is_none() {
             prefs.model = default.clone();
-            prefs.save(&state.data_dir);
         }
+        prefs.save(&state.data_dir);
     }
 
     Ok(AiModelsResponse { models, default })
@@ -161,15 +239,18 @@ pub struct AiModelsResponse {
     pub default: Option<String>,
 }
 
-/// Fetch the model list from `GET /v1/models`.
+/// Fetch the model list from the provider in use.
 ///
 /// Live rather than hardcoded, as the spec requires: a baked-in list is wrong the week a
-/// model ships, and which models a given key can reach is not knowable from here.
+/// model ships, which models a given key can reach is not knowable from here, and for a
+/// local server "what is loaded" is a question only the server can answer.
 #[tauri::command]
-pub async fn ai_models() -> CommandResult<AiModelsResponse> {
-    let (models, default) = tauri::async_runtime::spawn_blocking(unplugged_ai::available_models)
-        .await
-        .map_err(|e| CommandError::from(format!("the model list did not finish: {e}")))??;
+pub async fn ai_models(state: State<'_, AppState>) -> CommandResult<AiModelsResponse> {
+    let (endpoint, _) = endpoint(&state)?;
+    let (models, default) =
+        tauri::async_runtime::spawn_blocking(move || unplugged_ai::available_models(&endpoint))
+            .await
+            .map_err(|e| CommandError::from(format!("the model list did not finish: {e}")))??;
 
     Ok(AiModelsResponse { models, default })
 }
@@ -177,9 +258,29 @@ pub async fn ai_models() -> CommandResult<AiModelsResponse> {
 #[tauri::command]
 pub fn ai_set_model(state: State<'_, AppState>, model: String) -> CommandResult<AiStatus> {
     if let Ok(mut prefs) = state.ai_prefs.lock() {
-        prefs.model = Some(model);
+        prefs.set_current_model(model);
         prefs.save(&state.data_dir);
     }
+    Ok(status(&state))
+}
+
+/// Choose a provider, and where a local one lives.
+///
+/// The URL is stored even when Anthropic is selected: a user who set up LM Studio, went
+/// back to the cloud, and returned should not have to type it again.
+#[tauri::command]
+pub fn ai_set_provider(
+    state: State<'_, AppState>,
+    provider: Provider,
+    local_url: String,
+) -> CommandResult<AiStatus> {
+    if let Ok(mut prefs) = state.ai_prefs.lock() {
+        prefs.provider = provider;
+        prefs.local_url = unplugged_ai::provider::normalise(&local_url);
+        prefs.save(&state.data_dir);
+    }
+    // A proposal made against the previous provider is still applicable — it is only
+    // notes — so it deliberately survives this.
     Ok(status(&state))
 }
 
@@ -212,15 +313,11 @@ pub async fn ai_propose(
     selection: Vec<usize>,
     target: AiTarget,
 ) -> CommandResult<AiProposal> {
-    let model = state
-        .ai_prefs
-        .lock()
-        .ok()
-        .and_then(|prefs| prefs.model.clone())
-        .ok_or_else(|| CommandError {
-            code: "no_model",
-            message: "choose a model in Settings → AI first".to_string(),
-        })?;
+    let (endpoint, model) = endpoint(&state)?;
+    let model = model.ok_or_else(|| CommandError {
+        code: "no_model",
+        message: "choose a model in Settings → AI first".to_string(),
+    })?;
 
     // Snapshot everything the loop needs, then drop the lock: the request takes seconds
     // and holding the editor lock across it would freeze every other command.
@@ -272,6 +369,7 @@ pub async fn ai_propose(
             target_index,
             &EditRequest {
                 prompt: &prompt,
+                endpoint: &endpoint,
                 model: &model,
                 context,
                 notes: &notes,
@@ -305,6 +403,8 @@ pub async fn ai_propose(
                 },
                 transaction: proposal.transaction,
                 base,
+                preview: proposal.preview_notes.clone(),
+                edited: false,
             })
         };
     }
@@ -318,6 +418,51 @@ pub async fn ai_propose(
         truncated: proposal.truncated,
         summary,
         empty,
+    })
+}
+
+/// What changes when the user adjusts a proposal by hand.
+///
+/// Only the parts that can change: the narration, the tool steps and the token counts
+/// describe how the proposal was arrived at, and moving a note does not revise history.
+#[derive(Debug, Serialize)]
+pub struct AiEdit {
+    pub diff: NoteDiff,
+    pub preview_notes: Vec<Note>,
+    pub summary: String,
+    pub empty: bool,
+}
+
+/// Replace the notes a proposal is offering.
+///
+/// Validated rather than trusted, like every other note that arrives from the webview.
+/// The diff is recomputed here because the one that came with the proposal describes the
+/// model's work, and after an adjustment that is no longer what is on offer.
+#[tauri::command]
+pub fn ai_set_notes(state: State<'_, AppState>, notes: Vec<Note>) -> CommandResult<AiEdit> {
+    for note in &notes {
+        note.validate()?;
+    }
+    let mut notes = notes;
+    notes.sort_by_key(Note::order_key);
+
+    let mut guard = state
+        .pending_ai
+        .lock()
+        .map_err(|_| CommandError::from("the proposal lock was poisoned".to_string()))?;
+    let pending = guard
+        .as_mut()
+        .ok_or_else(|| CommandError::from("there is no proposal to adjust".to_string()))?;
+
+    let diff = unplugged_core::diff::between(&pending.base, &notes);
+    pending.preview = notes.clone();
+    pending.edited = true;
+
+    Ok(AiEdit {
+        summary: diff.summary(),
+        empty: diff.is_empty(),
+        diff,
+        preview_notes: notes,
     })
 }
 
@@ -394,11 +539,39 @@ pub fn ai_accept(state: State<'_, AppState>) -> CommandResult<EditorState> {
         });
     }
 
-    let outcome = open.session.apply(proposal.transaction)?;
+    let transaction = if proposal.edited {
+        // The model's transaction is a minimal diff against the notes it was given, and
+        // the user has since moved things it does not know about. Replacing the track's
+        // notes wholesale is coarser and correct; it is still one undo step.
+        replacement(&proposal)
+    } else {
+        proposal.transaction
+    };
+
+    let outcome = open.session.apply(transaction)?;
     open.dirty = true;
     state.audio.set_timeline(open.timeline());
 
     Ok(EditorState::of(open, outcome.affected, outcome.track))
+}
+
+/// An adjusted proposal, as a transaction: take out what was there, put in what is on
+/// offer. Delete first, because a command's indices address the list as it was.
+fn replacement(proposal: &PendingProposal) -> Transaction {
+    let mut commands = Vec::new();
+    if !proposal.base.is_empty() {
+        commands.push(unplugged_core::command::Command::Delete {
+            track: proposal.track,
+            indices: (0..proposal.base.len()).collect(),
+        });
+    }
+    if !proposal.preview.is_empty() {
+        commands.push(unplugged_core::command::Command::Insert {
+            track: proposal.track,
+            notes: proposal.preview.clone(),
+        });
+    }
+    Transaction::new(proposal.transaction.label.clone(), commands)
 }
 
 /// Throw the pending proposal away.
@@ -436,17 +609,47 @@ mod tests {
         // Nothing written yet: the default is no model, not a failure.
         assert!(AiPreferences::load(&dir).model.is_none());
 
-        let prefs = AiPreferences { model: Some("claude-sonnet-5".into()) };
+        let prefs = AiPreferences {
+            provider: Provider::LmStudio,
+            model: Some("claude-sonnet-5".into()),
+            local_model: Some("qwen2.5-coder".into()),
+            local_url: "http://localhost:1234/v1".into(),
+        };
         prefs.save(&dir);
-        assert_eq!(
-            AiPreferences::load(&dir).model.as_deref(),
-            Some("claude-sonnet-5")
-        );
+
+        let loaded = AiPreferences::load(&dir);
+        assert_eq!(loaded.provider, Provider::LmStudio);
+        assert_eq!(loaded.model.as_deref(), Some("claude-sonnet-5"));
+        // Each provider keeps its own choice: switching back must not have to ask again.
+        assert_eq!(loaded.current_model().as_deref(), Some("qwen2.5-coder"));
 
         // A corrupt file falls back to the default rather than refusing to start.
         std::fs::write(dir.join("ai.json"), b"{not json").unwrap();
         assert!(AiPreferences::load(&dir).model.is_none());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_settings_file_from_before_providers_existed_still_loads() {
+        // The field did not exist when these were written; it must default rather than
+        // make the file unreadable, which would silently lose the user's model.
+        let prefs: AiPreferences =
+            serde_json::from_str(r#"{"model":"claude-sonnet-5"}"#).unwrap();
+        assert_eq!(prefs.provider, Provider::Anthropic);
+        assert_eq!(prefs.current_model().as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(prefs.base_url(), unplugged_ai::LM_STUDIO_DEFAULT_URL);
+    }
+
+    #[test]
+    fn the_model_follows_the_provider_in_use() {
+        let mut prefs = AiPreferences::default();
+        prefs.set_current_model("claude-sonnet-5".into());
+        prefs.provider = Provider::LmStudio;
+        assert_eq!(prefs.current_model(), None, "a cloud model id means nothing locally");
+
+        prefs.set_current_model("qwen2.5-coder".into());
+        prefs.provider = Provider::Anthropic;
+        assert_eq!(prefs.current_model().as_deref(), Some("claude-sonnet-5"));
     }
 }

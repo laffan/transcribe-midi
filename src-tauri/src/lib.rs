@@ -190,7 +190,9 @@ pub fn run() {
             ai::ai_clear_key,
             ai::ai_models,
             ai::ai_set_model,
+            ai::ai_set_provider,
             ai::ai_propose,
+            ai::ai_set_notes,
             ai::ai_accept,
             ai::ai_reject,
             // Audio to MIDI (phase 7)
@@ -204,9 +206,10 @@ pub fn run() {
             transcribe::capture_set_notes,
             transcribe::capture_accept,
             transcribe::capture_cancel,
-            audition::capture_audition_play,
-            audition::capture_audition_stop,
-            audition::capture_audition_position,
+            audition::audition_take,
+            audition::audition_notes,
+            audition::audition_stop,
+            audition::audition_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Unplugged");

@@ -16,9 +16,11 @@ import { Inspector } from "./Inspector";
 import { ListenCapture } from "./ListenCapture";
 import { ListenOverlay } from "./ListenOverlay";
 import { ListenProgress } from "./ListenProgress";
+import { ListenThinking } from "./ListenThinking";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
 import { previewDiff } from "./pending";
 import { PianoRoll } from "./PianoRoll";
+import { ProposalEditor } from "./ProposalEditor";
 import { PromptBar } from "./PromptBar";
 import { ReviewBar } from "./ReviewBar";
 import { StartHere } from "./StartHere";
@@ -26,7 +28,7 @@ import { noteAt } from "./timeFormat";
 import { Toolbar } from "./Toolbar";
 import { TrackList } from "./TrackList";
 import { TranscribeEditor } from "./TranscribeEditor";
-import { useTranscription } from "./useTranscription";
+import { usePending } from "./usePending";
 import { useTransport } from "./useTransport";
 import "./Editor.css";
 
@@ -86,7 +88,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
     setSelectedTrack(state.affected_track);
   }, []);
 
-  const listen = useTranscription({
+  const listen = usePending({
     selectedTrack,
     ppq: manifest?.ppq ?? 480,
     onApplied: applied,
@@ -515,12 +517,11 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
           />
         ) : (
           <PromptBar
-            trackIndex={selectedTrack}
             trackName={track?.name ?? "this track"}
             selection={selection}
             settingsRevision={settingsRevision}
             disabled={listen.listening}
-            onProposal={(proposal) => listen.setPending({ kind: "ai", proposal })}
+            onDescribe={listen.describe}
             onOpenSettings={onOpenSettings}
           />
         )}
@@ -564,6 +565,34 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         </ListenOverlay>
       )}
 
+      {listen.stage === "thinking" && (
+        <ListenOverlay kind="Describe" title="Working on it">
+          <ListenThinking prompt={listen.prompt} onCancel={listen.cancelDescribe} />
+        </ListenOverlay>
+      )}
+
+      {listen.stage === "proposal" && listen.pending?.kind === "ai" && (
+        <ListenOverlay
+          kind="Describe"
+          title="What it suggests"
+          stat={listen.pending.proposal.summary}
+          onClose={listen.closeReview}
+          closeLabel="Close — the suggestion stays in the review bar"
+        >
+          <ProposalEditor
+            proposal={listen.pending.proposal}
+            base={track?.notes ?? []}
+            ppq={manifest.ppq}
+            tempoBpm={transport.tempoBpm}
+            timeSignature={manifest.time_signature}
+            onChange={listen.replaceProposal}
+            onApply={() => void listen.applyPending()}
+            onDiscard={() => void listen.discardPending()}
+            onPreviewNote={previewNote}
+          />
+        </ListenOverlay>
+      )}
+
       {listen.stage === "review" && listen.pending?.kind === "transcription" && (
         <ListenOverlay
           title="What came back"
@@ -574,10 +603,12 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
           <TranscribeEditor
             preview={listen.pending.preview}
             ppq={manifest.ppq}
-            onChange={listen.replacePreview}
             onApply={() => void listen.applyPending()}
             onDiscard={() => void listen.discardPending()}
             onPreviewNote={previewNote}
+            onReprocess={(useProjectTempo, quantizeTicks, tuning) =>
+              void listen.reprocess(useProjectTempo, quantizeTicks, tuning)
+            }
           />
         </ListenOverlay>
       )}

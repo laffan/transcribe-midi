@@ -270,7 +270,7 @@ export function Toolbar({
             Console
           </button>
           <button
-            className="btn btn--ghost btn--icon"
+            className="btn btn--ghost btn--icon toolbar__gear"
             onClick={onOpenSettings}
             aria-label="Settings"
             title="Settings"

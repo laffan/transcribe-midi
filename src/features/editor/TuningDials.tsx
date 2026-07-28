@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
-
 import { DEFAULT_TUNING, type TranscribeTuning } from "../../lib/types";
 
 interface TuningDialsProps {
-  tuning: TranscribeTuning;
+  /** The settings on the dials, which are not necessarily the ones on screen. */
+  draft: TranscribeTuning;
+  /** What produced the result currently drawn, for the "changed" marker. */
+  applied: TranscribeTuning;
   disabled: boolean;
-  /** Called when a dial is *released*, not while it moves. */
-  onCommit: (tuning: TranscribeTuning) => void;
+  onChange: (tuning: TranscribeTuning) => void;
 }
 
 interface Dial {
@@ -75,8 +75,9 @@ const DIALS: Dial[] = [
   },
 ];
 
-function isDefault(tuning: TranscribeTuning): boolean {
-  return DIALS.every((dial) => tuning[dial.key] === DEFAULT_TUNING[dial.key]);
+/** Whether two tunings agree on every dial. */
+export function sameTuning(a: TranscribeTuning, b: TranscribeTuning): boolean {
+  return DIALS.every((dial) => a[dial.key] === b[dial.key]);
 }
 
 /**
@@ -87,26 +88,19 @@ function isDefault(tuning: TranscribeTuning): boolean {
  * line at a laptop; a plucked string or a breathy voice wants something else, and getting
  * it wrong produces a plausible-looking result rather than an obviously broken one.
  *
- * Moving a dial re-reads the take that is already in memory, which is seconds of work, so
- * a change is sent when the control is *released* rather than on every pixel of a drag.
+ * The dials only move a *draft*. Re-reading the take is seconds of work, and doing it on
+ * every release meant a pass of the analysis for each dial touched on the way to the
+ * setting you wanted — so nothing happens until the button over the editor is pressed.
  */
-export function TuningDials({ tuning, disabled, onCommit }: TuningDialsProps) {
-  // Shown while dragging, before Rust has been asked for anything.
-  const [draft, setDraft] = useState(tuning);
-
-  // A re-derivation answers with the tuning it actually used, including any clamping.
-  useEffect(() => setDraft(tuning), [tuning]);
-
-  const commit = (next: TranscribeTuning) => {
-    if (DIALS.every((dial) => next[dial.key] === tuning[dial.key])) return;
-    onCommit(next);
-  };
+export function TuningDials({ draft, applied, disabled, onChange }: TuningDialsProps) {
+  const set = (key: keyof TranscribeTuning, value: number) =>
+    onChange({ ...draft, [key]: value });
 
   return (
     <details className="tuning">
       <summary className="tuning__summary">
         Analysis
-        {!isDefault(tuning) && <span className="tuning__badge">adjusted</span>}
+        {!sameTuning(applied, DEFAULT_TUNING) && <span className="tuning__badge">adjusted</span>}
       </summary>
 
       <div className="tuning__grid">
@@ -123,10 +117,7 @@ export function TuningDials({ tuning, disabled, onCommit }: TuningDialsProps) {
               step={dial.step}
               value={draft[dial.key]}
               disabled={disabled}
-              onChange={(e) => setDraft({ ...draft, [dial.key]: Number(e.target.value) })}
-              onPointerUp={() => commit(draft)}
-              onKeyUp={() => commit(draft)}
-              onBlur={() => commit(draft)}
+              onChange={(e) => set(dial.key, Number(e.target.value))}
             />
           </label>
         ))}
@@ -134,13 +125,13 @@ export function TuningDials({ tuning, disabled, onCommit }: TuningDialsProps) {
 
       <div className="tuning__foot">
         <span className="field__hint">
-          Changing one of these re-reads the take you already performed — it never asks
-          for another.
+          These re-read the take you already performed — nothing here ever asks for
+          another. Press Re-process to hear the result.
         </span>
         <button
           className="btn btn--ghost"
-          onClick={() => onCommit(DEFAULT_TUNING)}
-          disabled={disabled || isDefault(tuning)}
+          onClick={() => onChange(DEFAULT_TUNING)}
+          disabled={disabled || sameTuning(draft, DEFAULT_TUNING)}
         >
           Reset
         </button>

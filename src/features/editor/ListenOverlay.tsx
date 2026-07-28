@@ -3,7 +3,12 @@ import type { ReactNode } from "react";
 import "./ListenOverlay.css";
 
 interface ListenOverlayProps {
-  /** Short line naming what is happening, shown next to the stage marker. */
+  /**
+   * Which activity this is. Two use the same frame — turning audio into notes, and
+   * describing an edit — and the marker is how you know at a glance which one you are in.
+   */
+  kind?: "Listen" | "Describe";
+  /** Short line naming what is happening, shown next to the marker. */
   title: string;
   /** Numbers about the take: length, notes, tempo. */
   stat?: ReactNode;
@@ -23,11 +28,18 @@ interface ListenOverlayProps {
  * you play something, you look at what came back, you fix it or you do it again. So it
  * is one surface for the duration, and the stage inside it changes.
  */
-export function ListenOverlay({ title, stat, onClose, closeLabel, children }: ListenOverlayProps) {
+export function ListenOverlay({
+  kind = "Listen",
+  title,
+  stat,
+  onClose,
+  closeLabel,
+  children,
+}: ListenOverlayProps) {
   return (
-    <div className="listen" role="dialog" aria-label="Listen">
+    <div className="listen" role="dialog" aria-label={kind}>
       <header className="listen__head">
-        <span className="listen__stage">Listen</span>
+        <span className="listen__stage">{kind}</span>
         <h2 className="listen__title truncate">{title}</h2>
         {stat && <span className="listen__stat mono">{stat}</span>}
         <div className="spacer" />

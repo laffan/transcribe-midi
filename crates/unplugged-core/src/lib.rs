@@ -8,6 +8,7 @@ pub mod ai;
 pub mod audition;
 pub mod build_info;
 pub mod command;
+pub mod diff;
 pub mod error;
 pub mod host_sync;
 pub mod model;

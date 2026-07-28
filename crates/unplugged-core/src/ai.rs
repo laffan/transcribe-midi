@@ -1278,47 +1278,9 @@ impl Workspace {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Diff
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NoteChange {
-    pub before: Note,
-    pub after: Note,
-}
-
-/// The preview the user sees before anything is committed.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct NoteDiff {
-    pub added: Vec<Note>,
-    pub removed: Vec<Note>,
-    pub changed: Vec<NoteChange>,
-}
-
-impl NoteDiff {
-    pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
-    }
-
-    /// One line for the console and the accept/reject prompt.
-    pub fn summary(&self) -> String {
-        if self.is_empty() {
-            return "No change".into();
-        }
-        let mut parts = Vec::new();
-        if !self.added.is_empty() {
-            parts.push(format!("{} added", self.added.len()));
-        }
-        if !self.removed.is_empty() {
-            parts.push(format!("{} removed", self.removed.len()));
-        }
-        if !self.changed.is_empty() {
-            parts.push(format!("{} changed", self.changed.len()));
-        }
-        parts.join(", ")
-    }
-}
+// The note diff lives in `crate::diff`: it describes a change to a list of notes and
+// has nothing to do with the model. Re-exported so existing paths keep working.
+pub use crate::diff::{NoteChange, NoteDiff};
 
 // ---------------------------------------------------------------------------
 // Deterministic randomness

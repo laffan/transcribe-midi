@@ -11,7 +11,9 @@ import { listen } from "@tauri-apps/api/event";
 
 import { mockBackend, mockTransport } from "./mockBackend";
 import type {
+  AiEdit,
   AiModelsResponse,
+  AiProvider,
   AuditionSource,
   CaptureStatus,
   TranscribeTuning,
@@ -166,8 +168,12 @@ export const api = {
   aiClearKey: () => call<AiStatus>("ai_clear_key"),
   aiModels: () => call<AiModelsResponse>("ai_models"),
   aiSetModel: (model: string) => call<AiStatus>("ai_set_model", { model }),
+  aiSetProvider: (provider: AiProvider, localUrl: string) =>
+    call<AiStatus>("ai_set_provider", { provider, localUrl }),
   aiPropose: (track: number, prompt: string, selection: number[], target: AiTarget) =>
     call<AiProposal>("ai_propose", { track, prompt, selection, target }),
+  /** Hand back adjusted notes; Rust validates them and re-derives its own diff. */
+  aiSetNotes: (notes: Note[]) => call<AiEdit>("ai_set_notes", { notes }),
   aiAccept: () => call<EditorState>("ai_accept"),
   aiReject: () => call<void>("ai_reject"),
 
@@ -228,10 +234,13 @@ export const api = {
   // One play/stop for both sources. Which of them makes the sound is Rust's business;
   // the position that comes back is the one to draw a playhead with either way.
 
-  auditionPlay: (fromSeconds: number, source: AuditionSource) =>
-    call<void>("capture_audition_play", { fromSeconds, source }),
-  auditionStop: () => call<void>("capture_audition_stop"),
-  auditionPosition: () => call<number | null>("capture_audition_position"),
+  /** Play the recorded take: its notes, its audio, or both. */
+  auditionTake: (fromSeconds: number, source: AuditionSource) =>
+    call<void>("audition_take", { fromSeconds, source }),
+  /** Play the notes a described edit is offering. There is no recording to compare. */
+  auditionNotes: (fromSeconds: number) => call<void>("audition_notes", { fromSeconds }),
+  auditionStop: () => call<void>("audition_stop"),
+  auditionPosition: () => call<number | null>("audition_position"),
 
   copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
   shareFile: (path: string) => call<void>("share_file", { path }),

@@ -26,6 +26,11 @@ export interface Scale {
   low: number;
   high: number;
   ticksPerSecond: number;
+  /**
+   * Where the note lane begins. [`WAVE_HEIGHT`] under a waveform; zero when there is no
+   * recording behind the notes, which is every proposal the model makes.
+   */
+  laneTop: number;
 }
 
 export interface Rect {
@@ -49,9 +54,9 @@ export function secondsOf(scale: Scale, x: number): number {
   return (x / Math.max(1, scale.width)) * scale.duration;
 }
 
-/** Where the pitch lane starts and how tall it is, given the waveform above it. */
+/** Where the note lane starts and how tall it is, given whatever sits above it. */
 function lane(scale: Scale): { top: number; height: number } {
-  return { top: WAVE_HEIGHT, height: Math.max(80, scale.height - WAVE_HEIGHT) };
+  return { top: scale.laneTop, height: Math.max(80, scale.height - scale.laneTop) };
 }
 
 export function yOf(scale: Scale, midi: number): number {

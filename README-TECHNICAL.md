@@ -21,7 +21,8 @@ crates/unplugged-core/       Domain model, sequencer, command layer, SMF, persis
 crates/unplugged-audio/      Audio engine binding: Rust API, C ABI to Swift, null backend
                              off-Apple so tests run anywhere.
 crates/unplugged-midi/       External MIDI input (CoreMIDI via midir), null backend off-Apple.
-crates/unplugged-ai/         Anthropic client + tool loop. The API key never leaves this crate.
+crates/unplugged-ai/         Provider clients (Anthropic, OpenAI-compatible) + tool loop.
+                             The API key never leaves this crate.
 crates/unplugged-transcribe/ Audio-to-MIDI DSP (YIN, spectral flux, tempo). Pure math,
                              no audio I/O, no dependencies.
 crates/unplugged-plugin/     The C ABI the AUv3 extension calls. Wraps core. No Tauri.
@@ -90,7 +91,7 @@ you touch one substantially, split it as part of the change:
 
 | File | Lines | Suggested split |
 |---|---|---|
-| `crates/unplugged-core/src/ai.rs` | ~2070 | `ai/` dir: tool defs, workspace, diff/transaction, rng, tests |
+| `crates/unplugged-core/src/ai.rs` | ~2030 | `ai/` dir: tool defs, workspace, transaction, rng, tests |
 | `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
 | `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
 | `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
@@ -101,12 +102,15 @@ Four files have come off this list by being touched, which is the rule working a
 intended:
 
 - **`Editor.tsx`** (~830) — transport and capture state into `useTransport` and
-  `useTranscription`, panels into `Toolbar`, `TrackList` and `Inspector`.
+  `usePending`, panels into `Toolbar`, `TrackList` and `Inspector`.
 - **`TranscribeEditor.tsx`** (~550) — geometry and canvas drawing into
   `transcribeGeometry.ts` and `transcribeDraw.ts`.
 - **`command.rs`** (~980) — now a directory: `command/mod.rs` (session and history),
   `command/edits.rs` (the gestures), `command/tests.rs`.
 - **`unplugged-transcribe/src/lib.rs`** (~1090) — tests into a sibling `tests.rs`.
+
+`ai.rs` also shed its note diff to `core::diff`, which is a start on its own row rather
+than a discharge of it.
 
 ## Coding standards
 
@@ -163,6 +167,7 @@ test or a greppable comment chain:
 | Shared data path `~/Library/Application Support/Unplugged` | `shared_container.rs::HOME_RELATIVE_DIR`, `UnpluggedAudioUnit.swift::homeRelativeDataDirectory`, `plugin/Support/UnpluggedAU.entitlements` (tested: `the_three_places_that_name_the_shared_path_agree`) |
 | AU identity `aumi` / `Unpl` / `Lffn` | `plugin/Support/Info.plist`, `scripts/verify-plugin.sh`, any docs |
 | `CRenderedEvent` layout | `crates/unplugged-plugin/src/lib.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` |
+| Tool definitions | described once in `unplugged-core::ai`; `openai::tool_schema` rewraps them, and a second set of definitions would be a second place to forget |
 | Only the read path decrypts the API key | `Keychain.swift` ↔ `keychain.rs` — status is answered from item *attributes*, never `kSecReturnData` (tested: `only_the_read_path_asks_the_keychain_for_the_secret`) |
 | Bundle-id prefix rule | extension id must be prefixed by its container app's id (`project.yml` explains) |
 
@@ -189,7 +194,8 @@ them a place on disk needs a schema bump and a lifecycle, and is future work.
 - The Anthropic API key lives in the platform Keychain and is read only inside
   `unplugged-ai`, immediately before a request. It must never reach the webview, a config
   file, or a log.
-- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings.
+- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings. This
+  holds for a local server too, where it is the only way to know what is loaded.
 - Logic's note clipboard format is proprietary; do not attempt to reverse-engineer it.
   Interchange is SMF files.
 - AI edits operate through the fixed tool surface against a scratch workspace and land as

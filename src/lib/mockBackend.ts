@@ -12,6 +12,7 @@
 
 import { MockEditor, MockTransport } from "./mockEditor";
 import type {
+  AiEdit,
   AiModelsResponse,
   CaptureStatus,
   TranscriptionPreview,
@@ -395,7 +396,10 @@ export const mockBackend = {
     has_key: false,
     key_hint: null,
     key_persists: false,
+    provider: "anthropic",
     model: null,
+    local_url: "http://localhost:1234/v1",
+    ready: false,
   }),
   ai_set_key(): AiModelsResponse {
     return fail("internal", "AI editing needs the macOS or iOS build");
@@ -404,12 +408,21 @@ export const mockBackend = {
     has_key: false,
     key_hint: null,
     key_persists: false,
+    provider: "anthropic",
     model: null,
+    local_url: "http://localhost:1234/v1",
+    ready: false,
   }),
   ai_models(): AiModelsResponse {
     return fail("internal", "AI editing needs the macOS or iOS build");
   },
   ai_set_model(): AiStatus {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_set_provider(): AiStatus {
+    return fail("internal", "AI editing needs the macOS or iOS build");
+  },
+  ai_set_notes(): AiEdit {
     return fail("internal", "AI editing needs the macOS or iOS build");
   },
   ai_propose(): AiProposal {
@@ -454,11 +467,14 @@ export const mockBackend = {
   capture_set_notes(): Note[] {
     return fail("internal", "transcription needs the macOS or iOS build");
   },
-  capture_audition_play(): void {
+  audition_take(): void {
     fail("internal", "playing a take back needs the macOS or iOS build");
   },
-  capture_audition_stop(): void {},
-  capture_audition_position: (): number | null => null,
+  audition_notes(): void {
+    fail("internal", "playing notes back needs the macOS or iOS build");
+  },
+  audition_stop(): void {},
+  audition_position: (): number | null => null,
 };
 
 const inputSettings: InputSettings = {

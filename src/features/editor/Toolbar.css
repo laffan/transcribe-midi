@@ -32,6 +32,15 @@
   flex-shrink: 0;
 }
 
+/*
+ * The gear is the only pictogram in a row of words, and at the button's inherited 12px
+ * it read as a speck rather than as a control. Sized to the row instead of to the text.
+ */
+.toolbar__gear {
+  font-size: 20px;
+  line-height: 1;
+}
+
 .toolbar__centre {
   display: flex;
   align-items: center;
