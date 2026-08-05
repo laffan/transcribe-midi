@@ -87,39 +87,38 @@ TypeScript/TSX, Swift, CSS, shell. Tests count toward a file's total; splitting 
 a sibling `tests.rs` / `Foo.test.ts` is an accepted and encouraged way to comply.
 
 When a file approaches the limit, split along seams that already exist in its structure:
-a Rust module becomes a directory (`ai.rs` → `ai/tools.rs`, `ai/workspace.rs`,
-`ai/diff.rs`); a React component sheds subcomponents and hooks into siblings; a CSS file
-splits by the component it styles. Do not comply by deleting comments or compressing
-style — the limit exists to force *modularity*, not terseness.
+a Rust module becomes a directory (`ai.rs` became `ai/tools.rs`, `ai/workspace.rs`,
+`ai/generate.rs` and the rest); a React component sheds subcomponents and hooks into
+siblings; a CSS file splits by the component it styles. Do not comply by deleting comments
+or compressing style — the limit exists to force *modularity*, not terseness.
 
-**Current violations (debt register).** These predate the rule. Do not add to them; when
-you touch one substantially, split it as part of the change:
+The seam to look for is a *reason to change*, not a line count. `smf.rs` split by the
+direction data is moving; `music.rs` by musical concept; `PianoRoll.tsx` between what it
+paints and what it listens to. A split that leaves two files needing to be read together
+has moved lines without moving a boundary.
 
-| File | Lines | Suggested split |
-|---|---|---|
-| `crates/unplugged-core/src/ai.rs` | ~2030 | `ai/` dir: tool defs, workspace, transaction, rng, tests |
-| `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
-| `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
-| `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
-| `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
+**The debt register is empty.** Every file in the repository is under the limit. It was a
+list of nine when the rule was written; the last five came off in one pass, and the way
+they came off is the point — each split along a seam the register had already named, and
+none of them by deleting a comment.
 
-Five files have come off this list by being touched, which is the rule working as
-intended — the register is a list of files waiting for a reason to be split, not a list
-of exemptions:
+| Was | Became |
+|---|---|
+| `core/ai.rs` (2030) | `ai/` — `context`, `tools`, `schema`, `workspace`, `ops`, `generate`, `diff`, `rng`, `tests/` (six files), laid out along the path a request takes |
+| `core/sequencer.rs` (1150) | `sequencer/` — `event`, `timeline`, `scheduler`, `tests/` (seven files) |
+| `core/smf.rs` (860) | `smf/` — split by the direction data is moving: `read`, `write`, `import`, `tempo`, `tests/` |
+| `core/music.rs` (810) | `music/` — a file per concept: `pitch`, `scale`, `key`, `chord`, `roman`, `tests/` |
+| `core/command.rs` (980) | `command/` — `mod` (session and history), `edits` (the gestures), `tests` |
+| `unplugged-plugin/src/lib.rs` (765) | `abi` (the C boundary), `plugin` (the logic behind it), `event`, `tests/` |
+| `unplugged-transcribe/src/lib.rs` (1090) | tests into a sibling `tests.rs` |
+| `Editor.tsx` (830) | `useTransport`, `usePending`; panels into `Toolbar`, `TrackList`, `Inspector` |
+| `PianoRoll.tsx` (750) | `RollToolbar`, `rollGestures`, `useRollShortcuts`, `pianoRollPaint`, `pianoRollTheme` |
+| `TranscribeEditor.tsx` (550) | `transcribeGeometry`, `transcribeDraw` |
 
-- **`Editor.tsx`** (830 → 625) — transport and capture state into `useTransport` and
-  `usePending`, panels into `Toolbar`, `TrackList` and `Inspector`.
-- **`PianoRoll.tsx`** (750 → 683) — touch gestures pushed it to 810, so it split along
-  the seams the register had already named: a subcomponent (`RollToolbar.tsx`) and two
-  interaction hooks (`rollGestures.ts`, `useRollShortcuts.ts`).
-- **`TranscribeEditor.tsx`** (550 → 442) — geometry and canvas drawing into
-  `transcribeGeometry.ts` and `transcribeDraw.ts`.
-- **`command.rs`** (980) — now a directory: `command/mod.rs` (session and history),
-  `command/edits.rs` (the gestures), `command/tests.rs`.
-- **`unplugged-transcribe/src/lib.rs`** (1090 → 601) — tests into a sibling `tests.rs`.
-
-`ai.rs` also shed its note diff to `core::diff`, which is a start on its own row rather
-than a discharge of it.
+The largest file left is 656 lines (`core/store.rs`), with `src-tauri/src/ai.rs` a line
+behind it — comfortably under, but the two worth watching. **Do not start a new register.**
+A file that reaches the limit gets split in the change that took it there, not written down
+and left for later; that is what the last five were waiting for and it took a year.
 
 ## Coding standards
 

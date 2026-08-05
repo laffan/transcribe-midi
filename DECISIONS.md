@@ -2759,3 +2759,73 @@ reconciliation:
   settle.
 - **The toolbar strip's scroll affordance.** Nothing indicates that the bar continues past
   the right edge. It was the same bet in the old transport bar and it is still a bet.
+
+---
+
+## Emptying the debt register
+
+The modularity branch was not merged — it forks from the same commit as everything else
+and conflicts with the toolbar work in ten files, including two independent splits of
+`command.rs`. But its *reasoning* was the valuable part, and the reasoning transplants
+without the conflicts.
+
+Four of its five remaining splits turned out to be free. `sequencer.rs`, `smf.rs`,
+`music.rs` and `unplugged-plugin/src/lib.rs` had not been touched by anything since the
+fork, so those commits cherry-pick cleanly and land with their original messages and
+authorship intact. That is worth knowing as a general move: when branches diverge, check
+which files actually diverged before deciding a branch is unmergeable. A branch can be
+dead as a whole and still contain commits that apply.
+
+`ai.rs` was the exception, and only in one place: the toolbar branch had moved the note
+diff out to `crate::diff`, while the modularity branch had moved the same code into
+`ai/diff.rs` along with everything else. Both were right about where the transaction
+building belongs — inside `ai/` — and the toolbar branch was right that a change to a
+list of notes has nothing to do with the model. So `ai/diff.rs` keeps the part that reads
+a diff out of a finished workspace and imports the type from `crate::diff`, and `ai/mod.rs`
+re-exports it so existing `ai::NoteDiff` paths still resolve.
+
+### The piano roll, and proving a refactor rather than asserting one
+
+`PianoRoll.tsx` was 683 — compliant, and one edit from not being. Its split could not be
+cherry-picked, because the file had since gained touch gestures and an adaptive velocity
+lane, so the seam was adopted and the code written against our version: `pianoRollPaint.ts`
+takes a scene and a context and reads nothing else, and `pianoRollTheme.ts` resolves the
+tokens a canvas cannot read for itself.
+
+Painting is one function rather than a file per layer, deliberately. On a canvas the order
+*is* the logic — the keyboard gutter is drawn after the notes so notes scrolled off the
+left are covered rather than clipped, and the playhead is drawn last so nothing hides it.
+Files per layer would let that ordering be changed by accident.
+
+**The extraction was verified as a pure refactor rather than assumed to be one**, and the
+check paid for itself immediately. Seven notes drawn at fixed coordinates, then a marquee
+dragged across them, checksummed mid-drag and after release: `2689976671` and `788254948`
+before the split and after it. Hoisting `size.width` to a bare `width` had collided with a
+note-local `width` inside the preview block; renaming the declaration without renaming its
+uses would have drawn every proposed note the full width of the canvas, and nothing about
+that is a type error.
+
+The one painted path the check does not reach is the preview overlay itself — it needs a
+proposal, and the browser mock cannot produce one without an API key. Its colours moved
+from inline `token()` calls into `RollTheme` with the others, which the compiler checked,
+but no pixel has confirmed it.
+
+### What the register is now
+
+Empty. It was nine files when the rule was written. The instruction that replaces it: a
+file that reaches 700 gets split in the change that took it there. A register is a list of
+things everyone has agreed to keep not doing, and this one took a year to clear.
+
+### What was verified
+
+- **342 Rust tests** pass and clippy is clean across every split; both Apple targets
+  compile-check.
+- `tsc --noEmit && vite build` clean; the layout harness clean at all six geometries with
+  the multi-touch checks still passing.
+- Every file in the repository is under 700 lines. The largest is `core/store.rs` at 656.
+
+The splits are structural and the test suite is what stands behind them — 217 of those
+tests are in `unplugged-core`, whose four largest files were the ones taken apart. Nothing
+here has been run on a Mac, and the plugin split in particular rearranges the C ABI's file
+layout without changing a signature: `cargo check` against both Apple targets is the whole
+of the evidence, and the AUv3 has still never been compiled.
