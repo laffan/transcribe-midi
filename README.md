@@ -44,9 +44,10 @@ already use.
 ## Status
 
 Working today: projects, playback, recording (MIDI keyboard or on-screen keys),
-audio-to-MIDI transcription with a waveform fine-tuning editor, AI edits with diff
-preview, MIDI import/export, and a first-pass AUv3 plugin that builds, installs and
-registers. Not built yet: notation view, polyphonic transcription.
+audio-to-MIDI transcription in a full-window view that shows the take as you perform it
+and then lets you correct it against the waveform — hearing the notes, the recording, or
+both — AI edits with diff preview, MIDI import/export, and a first-pass AUv3 plugin that
+builds, installs and registers. Not built yet: notation view, polyphonic transcription.
 
 ## More
 

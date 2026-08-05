@@ -1,0 +1,382 @@
+/*
+ * Full-bleed over the editor, from the moment the microphone opens.
+ *
+ * Turning audio into notes is a mode, not a panel: while it is happening it is the only
+ * thing you are doing, and the take needs the width to be worth looking at — both while
+ * it accumulates and afterwards, when a note has to be judged against it.
+ */
+.listen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--bg-0);
+  min-width: 0;
+}
+
+.listen > * {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ head -- */
+
+/* Full-bleed and `position: fixed`, so the overlay owns every inset itself — there is
+   no chrome underneath it doing the job. */
+.listen__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: calc(var(--space-2) + var(--safe-top)) calc(var(--space-3) + var(--safe-right))
+    var(--space-2) calc(var(--space-3) + var(--safe-left));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  min-width: 0;
+}
+
+.listen__stage {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--diff-added);
+}
+
+.listen__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  min-width: 0;
+}
+
+.listen__stat {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ body -- */
+
+.listen__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+
+.listen__body--capture {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.listen__body--working {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+/* --------------------------------------------------------------- working -- */
+
+/*
+ * The wait, given a shape. Narrow and centred rather than full-bleed: there is nothing
+ * to look at here, and a bar the width of a display reads as a page loading rather than
+ * as a few seconds of arithmetic.
+ */
+.working {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(440px, 100%);
+  text-align: center;
+}
+
+.working__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--text-0);
+}
+
+.working__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.working__fill {
+  display: block;
+  height: 100%;
+  background: var(--diff-added);
+  /* Slightly slower than the poll, so the bar glides between samples instead of
+     stepping. Nothing is being animated for its own sake. */
+  transition: width 120ms linear;
+}
+
+.working__detail {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+
+/* Nothing honest to measure, so it sweeps rather than fills. */
+.working__fill--indeterminate {
+  width: 35%;
+  animation: working-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes working-sweep {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working__fill--indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+.thinking__prompt {
+  font-size: var(--text-md);
+  color: var(--text-1);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------------- proposal -- */
+
+.proposal__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.proposal__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.proposal__swatch--offer {
+  background: var(--diff-added);
+}
+
+.proposal__swatch--base {
+  background: var(--text-2);
+  opacity: 0.45;
+  margin-left: var(--space-2);
+}
+
+.proposal__narration {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- actions -- */
+
+/* The last row on screen, so it is what the home indicator sits over. */
+.listen__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) calc(var(--space-3) + var(--safe-right))
+    calc(var(--space-3) + var(--safe-bottom)) calc(var(--space-3) + var(--safe-left));
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  min-width: 0;
+}
+
+.listen__actions .field__hint {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------- capture -- */
+
+/*
+ * Tall enough to see a quiet passage, capped because past a point a taller waveform
+ * says nothing more — on a large display the rest of the height is better spent as
+ * space around it than as a three-foot amplitude.
+ */
+.capture__wave {
+  flex: 1;
+  min-height: 120px;
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.capture__wave canvas {
+  display: block;
+}
+
+.capture__readout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.capture__dot {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--diff-added);
+  animation: listen-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes listen-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* The dot is decoration; the clock and the meter carry the message. */
+@media (prefers-reduced-motion: reduce) {
+  .capture__dot {
+    animation: none;
+  }
+}
+
+.capture__clock {
+  flex: 0 0 auto;
+  font-size: var(--text-xl);
+  color: var(--text-0);
+}
+
+.capture__meter {
+  flex: 0 0 140px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.capture__meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--diff-added);
+  transition: width 80ms linear;
+}
+
+.capture__limit {
+  font-size: var(--text-sm);
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------- segmented -- */
+
+/*
+ * Three states of one choice, so they share an outline rather than being three buttons
+ * that happen to sit together. Which of them is on is the loudest thing in the row —
+ * it decides what you are listening to.
+ */
+.segmented {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.segmented__option {
+  padding: 0 var(--space-3);
+  height: 30px;
+  border: none;
+  border-right: 1px solid var(--border-strong);
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.segmented__option:last-child {
+  border-right: none;
+}
+
+.segmented__option:hover {
+  background: var(--border);
+  color: var(--text-0);
+}
+
+.segmented__option--on,
+.segmented__option--on:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .listen__actions .field__hint {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * A mode that takes the whole screen is already the right shape for a phone — the take
+ * gets everything the chrome does not. What has to change is the footer: this is the one
+ * place in the app where a mis-tap either keeps a transcription you had not read or
+ * throws away one you had, so the answer gets the full width and the largest targets on
+ * screen, and everything that is not the answer gives up its space to it.
+ */
+@media (max-width: 430px) {
+  .listen__head {
+    gap: var(--space-2);
+    padding-left: calc(var(--space-2) + var(--safe-left));
+    padding-right: calc(var(--space-2) + var(--safe-right));
+  }
+
+  /* The title says what stage this is; the stat line repeats numbers already drawn on
+     the waveform, and only one of the two fits beside a close button. */
+  .listen__stat {
+    display: none;
+  }
+
+  .listen__actions {
+    gap: var(--space-2);
+    flex-wrap: nowrap;
+    padding-left: calc(var(--space-2) + var(--safe-left));
+    padding-right: calc(var(--space-2) + var(--safe-right));
+  }
+
+  /* Standing advice, beside controls you are already using. */
+  .listen__actions .field__hint {
+    display: none;
+  }
+
+  .listen__actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    /* Long labels ("Add to track") shrink rather than pushing the row wider than the
+       screen; the button stays a button either way. */
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: var(--h-control);
+    text-align: center;
+  }
+}

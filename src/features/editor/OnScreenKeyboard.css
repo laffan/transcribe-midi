@@ -7,6 +7,17 @@
   min-width: 0;
 }
 
+/*
+ * Typing mode changes what every letter key on the machine does, so it is not allowed to
+ * be a subtle button state — the panel itself is outlined while it is on, which is the
+ * answer to "why did Space stop playing?".
+ */
+.keys--typing {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-muted);
+}
+
 .keys__controls {
   display: flex;
   flex-direction: column;
@@ -29,9 +40,32 @@
 @media (pointer: coarse) {
   .keys__controls .btn {
     height: 40px;
-    width: 40px;
     flex-shrink: 0;
   }
+
+  .keys__controls .btn--icon {
+    width: 40px;
+  }
+
+  /*
+   * The column lies down. It holds four things now — the typing toggle, two octave
+   * buttons and the octave they name — and at 40pt a control that is ~145pt stacked,
+   * which is taller than the board beside it. A flex column does not overflow visibly;
+   * it lets its last child hang out of the bottom, which on a phone is under the home
+   * indicator. As a row it is one control tall wherever it appears.
+   */
+  .keys__controls {
+    flex-direction: row;
+    gap: var(--space-1);
+  }
+}
+
+/* The mapping, where it is needed: only while the keys are live. */
+.keys__mode {
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .keys__octave {
@@ -136,6 +170,23 @@
   .keys {
     gap: var(--space-2);
     padding: 0;
+  }
+
+  /*
+   * Typing plays these keys from a computer keyboard, and a phone does not have one.
+   * It is not being hidden for space — it is inapplicable on the device, and as a row
+   * it would cost ~70pt of the width that makes the keys playable at all. The column
+   * comes back without it, which is what keeps a white key at ~40pt.
+   */
+  /* Two classes, to beat `.btn { display: inline-flex }` — global.css is loaded after
+     the feature stylesheets, so it wins any tie on specificity. */
+  .keys__controls .keys__typing {
+    display: none;
+  }
+
+  .keys__controls {
+    flex-direction: column;
+    gap: 2px;
   }
 
   .keys__board {

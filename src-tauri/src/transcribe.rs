@@ -14,14 +14,20 @@
 //! waveform editor has something to draw and so the settings stay re-derivable. It is
 //! still not a recording: it is evidence attached to a take, not material in the
 //! arrangement — never mixed, bounced, exported, or written to disk.
+//!
+//! Playing any of it back — the recording, the notes, or both at once — lives in
+//! [`crate::audition`], which owns the one place either can be started or stopped.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::State;
 use unplugged_core::command::{Command, Transaction};
 use unplugged_core::Note;
-use unplugged_transcribe::{Analysis, DetectedNote, TranscribeOptions, Transcription};
+use unplugged_transcribe::{
+    Analysis, DetectedNote, TranscribeOptions, TranscribeTuning, Transcription,
+};
 
 use crate::editor::EditorState;
 use crate::error::{CommandError, CommandResult};
@@ -48,9 +54,29 @@ pub struct CaptureState {
     /// Settings the current result was derived with, so re-deriving only needs the deltas.
     pub use_project_tempo: bool,
     pub quantize_ticks: u32,
+    pub tuning: TranscribeTuning,
 }
 
 pub type SharedCapture = Mutex<CaptureState>;
+
+/// How far through the analysis is, in thousandths.
+///
+/// An integer because it is written from the analysis thread and read by a command while
+/// that thread runs, and an atomic is the whole of the synchronisation this needs — the
+/// capture lock is held by the analysis for its duration and cannot also serve progress.
+#[derive(Default)]
+pub struct Progress(AtomicU32);
+
+impl Progress {
+    fn set(&self, fraction: f32) {
+        self.0
+            .store((fraction.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+    }
+
+    pub fn fraction(&self) -> f32 {
+        self.0.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub struct CaptureStatus {
@@ -63,7 +89,7 @@ pub struct CaptureStatus {
     pub at_limit: bool,
 }
 
-fn locked(state: &AppState) -> CommandResult<std::sync::MutexGuard<'_, CaptureState>> {
+pub(crate) fn locked(state: &AppState) -> CommandResult<std::sync::MutexGuard<'_, CaptureState>> {
     state
         .capture
         .lock()
@@ -80,6 +106,10 @@ pub fn capture_start(state: State<'_, AppState>) -> CommandResult<CaptureStatus>
         },
         message: error.to_string(),
     })?;
+
+    // Nothing from the previous take may still be sounding over the new one.
+    state.audition.stop();
+    state.preview.stop();
 
     let mut capture = locked(&state)?;
     capture.samples.clear();
@@ -149,10 +179,16 @@ pub struct TranscriptionPreview {
     /// that produced what is on screen.
     pub use_project_tempo: bool,
     pub quantize_ticks: u32,
+    pub tuning: TranscribeTuning,
 }
 
 impl TranscriptionPreview {
-    fn of(result: &Transcription, use_project_tempo: bool, quantize_ticks: u32) -> Self {
+    fn of(
+        result: &Transcription,
+        use_project_tempo: bool,
+        quantize_ticks: u32,
+        tuning: TranscribeTuning,
+    ) -> Self {
         // Thresholds are advisory: the notes are still returned and the user can accept
         // them. Refusing outright would be worse — sometimes a sparse take is exactly
         // what was played.
@@ -178,6 +214,7 @@ impl TranscriptionPreview {
             analysis: result.analysis.clone(),
             use_project_tempo,
             quantize_ticks,
+            tuning,
         }
     }
 }
@@ -193,6 +230,7 @@ pub async fn capture_transcribe(
     track: usize,
     use_project_tempo: bool,
     quantize_ticks: u32,
+    tuning: TranscribeTuning,
 ) -> CommandResult<TranscriptionPreview> {
     state.mic.stop();
 
@@ -213,10 +251,20 @@ pub async fn capture_transcribe(
         ));
     }
 
-    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+    transcribe_samples(
+        &state,
+        track,
+        samples,
+        sample_rate,
+        use_project_tempo,
+        quantize_ticks,
+        tuning,
+    )
+    .await
 }
 
 /// The shared body: analyse `samples`, store the result as the pending take.
+#[allow(clippy::too_many_arguments)]
 async fn transcribe_samples(
     state: &State<'_, AppState>,
     track: usize,
@@ -224,6 +272,7 @@ async fn transcribe_samples(
     sample_rate: f64,
     use_project_tempo: bool,
     quantize_ticks: u32,
+    tuning: TranscribeTuning,
 ) -> CommandResult<TranscriptionPreview> {
     let (ppq, channel, project_tempo) = {
         let guard = state
@@ -240,22 +289,29 @@ async fn transcribe_samples(
         (open.manifest.ppq, target.meta.channel, open.manifest.tempo_bpm)
     };
 
+    let tuning = tuning.clamped();
     let options = TranscribeOptions {
         sample_rate,
         ppq,
         tempo_bpm: use_project_tempo.then_some(project_tempo),
         quantize_ticks,
         channel,
+        tuning,
     };
 
     // Analysis of a two-minute take is seconds of work, so it runs off the command
     // thread — blocking there would freeze every other command including the transport.
-    let result =
-        tauri::async_runtime::spawn_blocking(move || unplugged_transcribe::transcribe(&samples, options))
-            .await
-            .map_err(|e| CommandError::from(format!("transcription did not finish: {e}")))?;
+    // It publishes how far it has got as it goes, because seconds of silence with no
+    // window on screen is indistinguishable from a hang.
+    let progress = Arc::clone(&state.transcribe_progress);
+    progress.set(0.0);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        unplugged_transcribe::transcribe_reporting(&samples, options, &mut |at| progress.set(at))
+    })
+    .await
+    .map_err(|e| CommandError::from(format!("transcription did not finish: {e}")))?;
 
-    let preview = TranscriptionPreview::of(&result, use_project_tempo, quantize_ticks);
+    let preview = TranscriptionPreview::of(&result, use_project_tempo, quantize_ticks, tuning);
 
     {
         let mut capture = locked(state)?;
@@ -268,10 +324,17 @@ async fn transcribe_samples(
         };
         capture.use_project_tempo = use_project_tempo;
         capture.quantize_ticks = quantize_ticks;
+        capture.tuning = tuning;
         capture.analysis = Some(result);
     }
 
     Ok(preview)
+}
+
+/// How far through the current analysis is, 0–1. Polled while the take is being read.
+#[tauri::command]
+pub fn capture_progress(state: State<'_, AppState>) -> CommandResult<f32> {
+    Ok(state.transcribe_progress.fraction())
 }
 
 /// Re-derive the current take with different settings.
@@ -284,6 +347,7 @@ pub async fn capture_retranscribe(
     state: State<'_, AppState>,
     use_project_tempo: bool,
     quantize_ticks: u32,
+    tuning: TranscribeTuning,
 ) -> CommandResult<TranscriptionPreview> {
     let (samples, sample_rate, track) = {
         let capture = locked(&state)?;
@@ -302,7 +366,16 @@ pub async fn capture_retranscribe(
         ));
     }
 
-    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+    transcribe_samples(
+        &state,
+        track,
+        samples,
+        sample_rate,
+        use_project_tempo,
+        quantize_ticks,
+        tuning,
+    )
+    .await
 }
 
 /// Load an audio file as the current take.
@@ -316,6 +389,7 @@ pub async fn capture_load_file(
     track: usize,
     use_project_tempo: bool,
     quantize_ticks: u32,
+    tuning: TranscribeTuning,
 ) -> CommandResult<TranscriptionPreview> {
     state.mic.stop();
 
@@ -337,7 +411,16 @@ pub async fn capture_load_file(
         capture.pending = None;
     }
 
-    transcribe_samples(&state, track, samples, sample_rate, use_project_tempo, quantize_ticks).await
+    transcribe_samples(
+        &state,
+        track,
+        samples,
+        sample_rate,
+        use_project_tempo,
+        quantize_ticks,
+        tuning,
+    )
+    .await
 }
 
 /// Peaks over a window of the retained take, for drawing the waveform at any zoom.
@@ -361,47 +444,17 @@ pub fn capture_waveform(
     ))
 }
 
-/// Play the retained take from `fromSeconds`.
-///
-/// The take, not the notes. Hearing the sampler play the transcription tells you what the
-/// *transcriber* heard; hearing the take tells you what you actually played, which is the
-/// comparison that lets you decide whether a note is wrong.
-#[tauri::command]
-pub fn capture_preview_play(state: State<'_, AppState>, from_seconds: f64) -> CommandResult<()> {
-    let (samples, sample_rate) = {
-        let capture = locked(&state)?;
-        (capture.samples.clone(), capture.sample_rate)
-    };
-
-    if samples.is_empty() || sample_rate <= 0.0 {
-        return Err(CommandError::from("there is no take to play".to_string()));
-    }
-
-    state
-        .preview
-        .load(&samples, sample_rate)
-        .and_then(|()| state.preview.play(from_seconds))
-        .map_err(|e| CommandError::from(e.to_string()))
-}
-
-#[tauri::command]
-pub fn capture_preview_stop(state: State<'_, AppState>) -> CommandResult<()> {
-    state.preview.stop();
-    Ok(())
-}
-
-/// Where playback has reached, or `None` when stopped. Polled to draw the playhead.
-#[tauri::command]
-pub fn capture_preview_position(state: State<'_, AppState>) -> CommandResult<Option<f64>> {
-    Ok(state.preview.position())
-}
-
 /// Replace the pending notes with ones the user adjusted in the editor.
 ///
 /// Validated here rather than trusted: these arrive from the webview, and a note that
 /// breaks the model's invariants must not reach the command layer.
+///
+/// Returns the notes as they were actually kept, not a count. Dragging one note over
+/// another has to resolve somehow — the take was one voice and stays one voice — and the
+/// editor must draw what Rust decided rather than what it asked for, or the next drag is
+/// computed against notes that no longer exist.
 #[tauri::command]
-pub fn capture_set_notes(state: State<'_, AppState>, notes: Vec<Note>) -> CommandResult<usize> {
+pub fn capture_set_notes(state: State<'_, AppState>, notes: Vec<Note>) -> CommandResult<Vec<Note>> {
     for note in &notes {
         note.validate()?;
     }
@@ -413,11 +466,9 @@ pub fn capture_set_notes(state: State<'_, AppState>, notes: Vec<Note>) -> Comman
         .map(|(track, _)| *track)
         .ok_or_else(|| CommandError::from("there is no transcription to adjust".to_string()))?;
 
-    let mut notes = notes;
-    notes.sort_by_key(Note::order_key);
-    let count = notes.len();
-    capture.pending = Some((track, notes));
-    Ok(count)
+    let notes = unplugged_core::monophony::flatten(&notes);
+    capture.pending = Some((track, notes.clone()));
+    Ok(notes)
 }
 
 /// Commit the pending transcription as a single undoable insert.
@@ -454,6 +505,7 @@ pub fn capture_accept(state: State<'_, AppState>) -> CommandResult<EditorState> 
 
     // The take has become notes. Holding twenty-odd megabytes for a result the user has
     // already committed would be the retention turning into a leak.
+    state.audition.stop();
     state.preview.stop();
     if let Ok(mut capture) = state.capture.lock() {
         capture.samples = Vec::new();
@@ -469,6 +521,8 @@ pub fn capture_accept(state: State<'_, AppState>) -> CommandResult<EditorState> 
 #[tauri::command]
 pub fn capture_cancel(state: State<'_, AppState>) -> CommandResult<()> {
     state.mic.stop();
+    state.audition.stop();
+    state.preview.stop();
     let mut capture = locked(&state)?;
     capture.recording = false;
     capture.samples = Vec::new();
@@ -501,6 +555,7 @@ mod tests {
             },
             true,
             0,
+            TranscribeTuning::default(),
         );
         assert!(preview.warning.is_some());
         assert!(preview.notes.is_empty());
@@ -517,6 +572,7 @@ mod tests {
             },
             true,
             120,
+            TranscribeTuning::default(),
         );
 
         assert!(preview.warning.is_some(), "the user should be told");
@@ -537,6 +593,7 @@ mod tests {
             },
             false,
             240,
+            TranscribeTuning::default(),
         );
         assert!(preview.warning.is_none());
         assert!(preview.tempo_estimated);

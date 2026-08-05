@@ -2,23 +2,42 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { Note, TranscriptionPreview, WaveformPeaks } from "../../lib/types";
+import type {
+  AuditionSource,
+  Note,
+  TranscribeTuning,
+  TranscriptionPreview,
+  WaveformPeaks,
+} from "../../lib/types";
+import { drawTranscription } from "./transcribeDraw";
+import {
+  hitTest,
+  midiOf,
+  pitchRangeOf,
+  secondsOf,
+  snapSeconds,
+  WAVE_HEIGHT,
+  type Drag,
+  type Scale,
+} from "./transcribeGeometry";
+import { sameTuning, TuningDials } from "./TuningDials";
+import { useAudition } from "./useAudition";
 import "./TranscribeEditor.css";
 
 interface TranscribeEditorProps {
   preview: TranscriptionPreview;
   ppq: number;
-  onChange: (preview: TranscriptionPreview) => void;
   onApply: () => void;
-  onClose: () => void;
+  onDiscard: () => void;
+  /** Sound a pitch briefly. What makes dragging a note something you can do by ear. */
+  onPreviewNote: (pitch: number) => void;
+  /**
+   * Read the take again. Owned by the parent because it swaps this view for the progress
+   * stage while it runs — seconds of analysis behind a frozen picture of the old result
+   * is the thing this replaced.
+   */
+  onReprocess: (useProjectTempo: boolean, quantizeTicks: number, tuning: TranscribeTuning) => void;
 }
-
-/** Height of the waveform lane, in CSS pixels. */
-const WAVE_HEIGHT = 96;
-/** Vertical padding inside the pitch lane. */
-const PITCH_PAD = 12;
-/** Grab width, in pixels, of a note's resize edge. */
-const EDGE_PX = 6;
 
 const GRIDS: { label: string; divisor: number }[] = [
   { label: "Off", divisor: 0 },
@@ -28,31 +47,29 @@ const GRIDS: { label: string; divisor: number }[] = [
   { label: "1/8 triplet", divisor: 3 },
 ];
 
-type Drag =
-  | { type: "none" }
-  | { type: "move"; index: number; grabSeconds: number; startPitch: number; startY: number }
-  | { type: "left"; index: number }
-  | { type: "right"; index: number };
+const SOURCES: { value: AuditionSource; label: string; title: string }[] = [
+  { value: "midi", label: "Notes", title: "Play the transcription on the sampler" },
+  { value: "take", label: "Recording", title: "Play the take you performed" },
+  { value: "both", label: "Both", title: "Play them together and compare" },
+];
 
 /**
- * The transcription editor: the take drawn as a waveform, the measured pitch traced over
- * it, and the detected notes on top as boxes you can drag.
+ * The review stage: the take drawn as a waveform, the measured pitch traced over it, and
+ * the detected notes on top as boxes you can drag.
  *
  * The point is to correct a note **against the evidence** rather than by ear against a
- * grid. Everything drawn here was already computed by the transcriber and, until Phase 9,
- * thrown away: the pitch line is the per-frame YIN estimate, the tick marks are the
- * spectral-flux onsets a boundary snaps to, and a note drawn off its own pitch line is
- * one the analysis was unsure about — which is exactly the note worth checking.
+ * grid — and to hear the result, which is why the notes are what plays by default.
  *
  * Adjustments go back to Rust as notes, which validates them, rather than being applied
- * here.
+ * here. Drawing and the geometry live in siblings; what is left is state and pointers.
  */
 export function TranscribeEditor({
   preview,
   ppq,
-  onChange,
   onApply,
-  onClose,
+  onDiscard,
+  onPreviewNote,
+  onReprocess,
 }: TranscribeEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,9 +78,12 @@ export function TranscribeEditor({
   const [notes, setNotes] = useState<Note[]>(() => preview.notes.map((n) => n.note));
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag>({ type: "none" });
-  const [busy, setBusy] = useState(false);
-  /** Where preview playback has reached, or null when stopped. */
-  const [playhead, setPlayhead] = useState<number | null>(null);
+  /** Where the dials are, which is not where the result on screen came from. */
+  const [draft, setDraft] = useState<TranscribeTuning>(preview.tuning);
+  /** The last pitch sounded by a drag, so a semitone step blips once and not per frame. */
+  const auditioned = useRef<number | null>(null);
+
+  const { source, changeSource, playhead, playFrom, stop, toggle } = useAudition();
 
   const duration = Math.max(0.001, preview.duration_seconds);
   const { analysis } = preview;
@@ -71,6 +91,18 @@ export function TranscribeEditor({
   // Notes arrive in ticks; everything here is in seconds against the waveform, so the
   // conversion happens once and both directions use it.
   const ticksPerSecond = (preview.tempo_bpm / 60) * ppq;
+
+  const scale: Scale = useMemo(() => {
+    const range = pitchRangeOf(notes, analysis);
+    return {
+      ...size,
+      duration,
+      ticksPerSecond,
+      low: range.low,
+      high: range.high,
+      laneTop: WAVE_HEIGHT,
+    };
+  }, [size, duration, ticksPerSecond, notes, analysis]);
 
   // -- sizing --------------------------------------------------------------
 
@@ -90,6 +122,8 @@ export function TranscribeEditor({
   useEffect(() => {
     setNotes(preview.notes.map((n) => n.note));
     setSelected(null);
+    // A fresh analysis answers with the tuning it actually used, including any clamping.
+    setDraft(preview.tuning);
   }, [preview]);
 
   // -- waveform ------------------------------------------------------------
@@ -103,99 +137,41 @@ export function TranscribeEditor({
       .catch(() => setPeaks([]));
   }, [duration, size.width]);
 
+  // Re-deriving replaces the notes under the playhead, so nothing may still be sounding.
+  useEffect(() => {
+    stop();
+  }, [preview, stop]);
+
   // -- playback ------------------------------------------------------------
-  //
-  // Hearing the take is the point of this view. The sampler playing the transcription
-  // tells you what the transcriber heard; the take tells you what you played, and the
-  // comparison is what lets you decide whether a note is wrong.
 
-  const stopPreview = useCallback(() => {
-    void api.capturePreviewStop().catch(() => {});
-    setPlayhead(null);
+  // Held in a ref so the listener is bound once and still sees the current selection —
+  // the same shape the editor's shortcuts use, for the same reason.
+  const shortcuts = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcuts.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "SELECT")) return;
+
+    if (event.code === "Space") {
+      event.preventDefault();
+      toggle();
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      deleteSelected();
+      return;
+    }
+    if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "j") {
+      event.preventDefault();
+      joinWithNext();
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => shortcuts.current(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  const playFrom = useCallback(
-    async (seconds: number) => {
-      try {
-        await api.capturePreviewPlay(Math.max(0, seconds));
-        setPlayhead(seconds);
-      } catch (e) {
-        logger.error("Could not play the take", errorMessage(e));
-        setPlayhead(null);
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (playhead === null) return;
-    const timer = window.setInterval(() => {
-      api
-        .capturePreviewPosition()
-        .then((position) => setPlayhead(position))
-        .catch(() => setPlayhead(null));
-    }, 50);
-    return () => window.clearInterval(timer);
-  }, [playhead === null]);
-
-  // Never leave audio running because the view closed or the take was replaced.
-  useEffect(() => stopPreview, [stopPreview]);
-  useEffect(() => {
-    stopPreview();
-  }, [preview, stopPreview]);
-
-  // -- geometry ------------------------------------------------------------
-
-  const pitchRange = useMemo(() => {
-    const pitches = notes.map((n) => n.pitch);
-    const measured = analysis.frames.filter((f) => f.midi > 0).map((f) => f.midi);
-    const all = [...pitches, ...measured];
-    if (all.length === 0) return { low: 48, high: 72 };
-
-    // A little air either side, and never so tight that a note dragged a semitone leaves
-    // the view.
-    const low = Math.floor(Math.min(...all)) - 2;
-    const high = Math.ceil(Math.max(...all)) + 2;
-    return { low, high: Math.max(high, low + 12) };
-  }, [notes, analysis.frames]);
-
-  const pitchTop = WAVE_HEIGHT;
-  const pitchHeight = Math.max(80, size.height - WAVE_HEIGHT);
-
-  const xOf = useCallback(
-    (seconds: number) => (seconds / duration) * size.width,
-    [duration, size.width],
-  );
-  const secondsOf = useCallback(
-    (x: number) => (x / Math.max(1, size.width)) * duration,
-    [duration, size.width],
-  );
-  const yOf = useCallback(
-    (midi: number) => {
-      const span = pitchRange.high - pitchRange.low;
-      const t = (midi - pitchRange.low) / span;
-      return pitchTop + pitchHeight - PITCH_PAD - t * (pitchHeight - PITCH_PAD * 2);
-    },
-    [pitchRange, pitchTop, pitchHeight],
-  );
-  const midiOf = useCallback(
-    (y: number) => {
-      const span = pitchRange.high - pitchRange.low;
-      const t = (pitchTop + pitchHeight - PITCH_PAD - y) / (pitchHeight - PITCH_PAD * 2);
-      return pitchRange.low + t * span;
-    },
-    [pitchRange, pitchTop, pitchHeight],
-  );
-
-  const noteRect = useCallback(
-    (note: Note) => {
-      const start = note.start_ticks / ticksPerSecond;
-      const end = (note.start_ticks + note.duration_ticks) / ticksPerSecond;
-      const y = yOf(note.pitch);
-      return { x: xOf(start), width: Math.max(3, xOf(end) - xOf(start)), y: y - 7, height: 14 };
-    },
-    [ticksPerSecond, xOf, yOf],
-  );
 
   // -- drawing -------------------------------------------------------------
 
@@ -212,131 +188,8 @@ export function TranscribeEditor({
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const style = getComputedStyle(document.documentElement);
-    const token = (name: string, fallback: string) =>
-      style.getPropertyValue(name).trim() || fallback;
-
-    const bgInset = token("--bg-inset", "#0a0b0e");
-    const border = token("--border", "#2b303b");
-    const text2 = token("--text-2", "#6f7689");
-    const accent = token("--accent", "#5b8dd9");
-    const added = token("--diff-added", "#6cb08a");
-    const changed = token("--diff-changed", "#d9a441");
-
-    ctx.clearRect(0, 0, size.width, size.height);
-
-    // ---- waveform ----
-    ctx.fillStyle = bgInset;
-    ctx.fillRect(0, 0, size.width, WAVE_HEIGHT);
-
-    const mid = WAVE_HEIGHT / 2;
-    ctx.strokeStyle = text2;
-    ctx.globalAlpha = 0.75;
-    ctx.beginPath();
-    peaks.forEach(([min, max], index) => {
-      const x = index + 0.5;
-      ctx.moveTo(x, mid - max * (mid - 4));
-      ctx.lineTo(x, mid - min * (mid - 4));
-    });
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    ctx.strokeStyle = border;
-    ctx.beginPath();
-    ctx.moveTo(0, WAVE_HEIGHT + 0.5);
-    ctx.lineTo(size.width, WAVE_HEIGHT + 0.5);
-    ctx.stroke();
-
-    // ---- onsets ----
-    // Drawn through both lanes: they are where a boundary snaps, so they need to be
-    // visible against the waveform *and* against the notes.
-    ctx.strokeStyle = changed;
-    ctx.globalAlpha = 0.45;
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    for (const frame of analysis.onsets) {
-      const x = Math.round(xOf(frame * analysis.hop_seconds)) + 0.5;
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, size.height);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-
-    // ---- semitone rules ----
-    ctx.strokeStyle = border;
-    ctx.globalAlpha = 0.5;
-    ctx.font = "9px ui-monospace, monospace";
-    for (let midi = Math.ceil(pitchRange.low); midi <= pitchRange.high; midi += 1) {
-      if (midi % 12 !== 0) continue;
-      const y = Math.round(yOf(midi)) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(size.width, y);
-      ctx.stroke();
-      ctx.fillStyle = text2;
-      ctx.fillText(`C${Math.floor(midi / 12) - 1}`, 3, y - 2);
-    }
-    ctx.globalAlpha = 1;
-
-    // ---- the measured pitch line ----
-    // The heart of the view. Confidence drives opacity, so a passage the tracker was
-    // unsure about looks unsure rather than looking like a fact.
-    let open = false;
-    ctx.lineWidth = 2;
-    analysis.frames.forEach((frame, index) => {
-      const voiced = frame.midi > 0 && frame.level > analysis.silence_floor;
-      if (!voiced) {
-        if (open) {
-          ctx.stroke();
-          open = false;
-        }
-        return;
-      }
-      const x = xOf(index * analysis.hop_seconds);
-      const y = yOf(frame.midi);
-      if (!open) {
-        ctx.beginPath();
-        ctx.strokeStyle = accent;
-        ctx.globalAlpha = 0.35 + Math.min(1, frame.confidence) * 0.5;
-        ctx.moveTo(x, y);
-        open = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    });
-    if (open) ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = 1;
-
-    // ---- notes ----
-    notes.forEach((note, index) => {
-      const rect = noteRect(note);
-      const isSelected = selected === index;
-
-      ctx.globalAlpha = isSelected ? 1 : 0.8;
-      ctx.fillStyle = added;
-      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-
-      if (isSelected) {
-        ctx.strokeStyle = token("--key-white", "#e8eaf0");
-        ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
-      }
-      ctx.globalAlpha = 1;
-    });
-
-    // ---- preview playhead ----
-    if (playhead !== null) {
-      const x = Math.round(xOf(playhead)) + 0.5;
-      ctx.strokeStyle = token("--playhead", "#d9a441");
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, size.height);
-      ctx.stroke();
-      ctx.lineWidth = 1;
-    }
-  }, [size, peaks, notes, selected, analysis, pitchRange, playhead, xOf, yOf, noteRect]);
+    drawTranscription(ctx, { scale, peaks, notes, selected, analysis, playhead });
+  }, [scale, size, peaks, notes, selected, analysis, playhead]);
 
   // -- pointer -------------------------------------------------------------
 
@@ -345,54 +198,28 @@ export function TranscribeEditor({
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
-  function hitTest(x: number, y: number): Drag {
-    for (let index = notes.length - 1; index >= 0; index -= 1) {
-      const rect = noteRect(notes[index]!);
-      if (x < rect.x - EDGE_PX || x > rect.x + rect.width + EDGE_PX) continue;
-      if (y < rect.y - 4 || y > rect.y + rect.height + 4) continue;
-
-      if (x <= rect.x + EDGE_PX) return { type: "left", index };
-      if (x >= rect.x + rect.width - EDGE_PX) return { type: "right", index };
-      return {
-        type: "move",
-        index,
-        grabSeconds: secondsOf(x) - notes[index]!.start_ticks / ticksPerSecond,
-        startPitch: notes[index]!.pitch,
-        startY: y,
-      };
-    }
-    return { type: "none" };
-  }
-
-  /** Nearest onset within a small window, so a dragged edge lands on the attack. */
-  function snapSeconds(seconds: number): number {
-    let best = seconds;
-    let bestDistance = 0.05; // 50 ms — close enough to be what the user meant
-    for (const frame of analysis.onsets) {
-      const at = frame * analysis.hop_seconds;
-      const distance = Math.abs(at - seconds);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = at;
-      }
-    }
-    return Math.max(0, best);
-  }
-
   function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const { x, y } = localPoint(event);
 
     // The waveform lane is for listening, the pitch lane is for editing. Clicking the
     // waveform plays from there, which is the fastest way to check a particular moment.
     if (y < WAVE_HEIGHT) {
-      void playFrom(secondsOf(x));
+      void playFrom(secondsOf(scale, x));
       return;
     }
 
-    const hit = hitTest(x, y);
+    const hit = hitTest(scale, notes, x, y);
     canvasRef.current?.setPointerCapture(event.pointerId);
     setDrag(hit);
     setSelected(hit.type === "none" ? null : hit.index);
+
+    // Sound what was grabbed. Correcting a transcription is an ear job, and the note
+    // under the cursor is the one being judged.
+    if (hit.type !== "none") {
+      const pitch = notes[hit.index]!.pitch;
+      auditioned.current = pitch;
+      onPreviewNote(pitch);
+    }
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -404,20 +231,26 @@ export function TranscribeEditor({
       const note = { ...next[drag.index]! };
 
       if (drag.type === "move") {
-        const start = snapSeconds(secondsOf(x) - drag.grabSeconds);
+        const start = snapSeconds(analysis, secondsOf(scale, x) - drag.grabSeconds);
         note.start_ticks = Math.max(0, Math.round(start * ticksPerSecond));
         // Semitone steps: the pitch line shows where the source actually sat, and a note
         // is a note. Fractions belong on the line, not in the MIDI.
-        const delta = Math.round(midiOf(y) - midiOf(drag.startY));
+        const delta = Math.round(midiOf(scale, y) - midiOf(scale, drag.startY));
         note.pitch = Math.min(127, Math.max(0, drag.startPitch + delta));
       } else if (drag.type === "left") {
         const end = note.start_ticks + note.duration_ticks;
-        const start = Math.round(snapSeconds(secondsOf(x)) * ticksPerSecond);
+        const start = Math.round(snapSeconds(analysis, secondsOf(scale, x)) * ticksPerSecond);
         note.start_ticks = Math.max(0, Math.min(start, end - 1));
         note.duration_ticks = Math.max(1, end - note.start_ticks);
       } else {
-        const end = Math.round(snapSeconds(secondsOf(x)) * ticksPerSecond);
+        const end = Math.round(snapSeconds(analysis, secondsOf(scale, x)) * ticksPerSecond);
         note.duration_ticks = Math.max(1, end - note.start_ticks);
+      }
+
+      // Dragging by ear: a blip on each semitone crossed, not on each pointer frame.
+      if (drag.type === "move" && note.pitch !== auditioned.current) {
+        auditioned.current = note.pitch;
+        onPreviewNote(note.pitch);
       }
 
       next[drag.index] = note;
@@ -428,36 +261,52 @@ export function TranscribeEditor({
   function onPointerUp() {
     if (drag.type === "none") return;
     setDrag({ type: "none" });
-    void commit();
+    auditioned.current = null;
+    void commit(notes);
   }
 
-  /** Send the adjusted notes to Rust, which validates them. */
-  const commit = useCallback(async () => {
+  /**
+   * Send the adjusted notes to Rust and take back what it kept.
+   *
+   * Rust validates them and flattens any overlap a drag created, so what comes back is
+   * not always what went out. Adopting the answer is what keeps the next drag working
+   * against notes that actually exist.
+   */
+  const commit = useCallback(async (next: Note[]) => {
     try {
-      await api.captureSetNotes(notes);
+      setNotes(await api.captureSetNotes(next));
     } catch (e) {
       logger.error("Could not adjust the notes", errorMessage(e));
     }
-  }, [notes]);
-
-  async function rederive(useProjectTempo: boolean, quantizeTicks: number) {
-    setBusy(true);
-    try {
-      // The take is still here, so this re-reads it rather than asking for another
-      // performance — which is the whole reason the audio is retained.
-      onChange(await api.captureRetranscribe(useProjectTempo, quantizeTicks));
-    } catch (e) {
-      logger.error("Could not re-read the take", errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, []);
 
   function deleteSelected() {
     if (selected === null) return;
-    setNotes((current) => current.filter((_, index) => index !== selected));
+    const next = notes.filter((_, index) => index !== selected);
     setSelected(null);
-    void commit();
+    void commit(next);
+  }
+
+  /**
+   * Merge the selected note into the one after it.
+   *
+   * The editor selects one note at a time, and the case this is for is always the same
+   * pair: a held note the analysis broke in two, at a vibrato wobble or a slur it read as
+   * an attack. Joining forwards covers it without a marquee, and repeating the key walks
+   * along a note that came back in four pieces.
+   */
+  function joinWithNext() {
+    if (selected === null || selected + 1 >= notes.length) return;
+    const first = notes[selected]!;
+    const second = notes[selected + 1]!;
+    const end = second.start_ticks + second.duration_ticks;
+
+    const next = notes.filter((_, index) => index !== selected + 1);
+    next[selected] = {
+      ...first,
+      duration_ticks: Math.max(1, end - first.start_ticks),
+    };
+    void commit(next);
   }
 
   const gridDivisor =
@@ -466,21 +315,8 @@ export function TranscribeEditor({
       : (GRIDS.find((g) => Math.round(ppq / g.divisor) === preview.quantize_ticks)?.divisor ?? 0);
 
   return (
-    <div className="tedit" role="dialog" aria-label="Transcription editor">
-      <header className="tedit__head">
-        <h2 className="tedit__title">Fine-tune transcription</h2>
-        <span className="tedit__stat mono">
-          {notes.length} notes · {duration.toFixed(1)}s ·{" "}
-          {preview.tempo_bpm.toFixed(0)} bpm
-          {preview.tempo_estimated ? " (estimated)" : ""}
-        </span>
-        <div className="spacer" />
-        <button className="btn btn--ghost btn--icon" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
-      </header>
-
-      <div className="tedit__canvas" ref={containerRef}>
+    <>
+      <div className="listen__body tedit__canvas" ref={containerRef}>
         <canvas
           ref={canvasRef}
           style={{ width: size.width, height: size.height }}
@@ -489,59 +325,118 @@ export function TranscribeEditor({
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />
-      </div>
 
-      <div className="tedit__controls">
-        <label className="tedit__control">
-          <span className="field__label">Snap to</span>
-          <select
-            className="input"
-            value={gridDivisor}
-            disabled={busy}
-            onChange={(e) => {
-              const divisor = Number(e.target.value);
-              void rederive(preview.use_project_tempo, divisor === 0 ? 0 : Math.round(ppq / divisor));
-            }}
+        {/* Over the result rather than beside the dials: what it acts on is what you are
+            looking at, and the answer to "why has nothing changed?" should be in view. */}
+        {!sameTuning(draft, preview.tuning) && (
+          <button
+            className="btn btn--primary btn--lg tedit__reprocess"
+            onClick={() => onReprocess(preview.use_project_tempo, preview.quantize_ticks, draft)}
           >
-            {GRIDS.map((grid) => (
-              <option key={grid.label} value={grid.divisor}>
-                {grid.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="tedit__check">
-          <input
-            type="checkbox"
-            checked={preview.use_project_tempo}
-            disabled={busy}
-            onChange={(e) => void rederive(e.target.checked, preview.quantize_ticks)}
-          />
-          <span>Use the project tempo</span>
-        </label>
-
-        <span className="field__hint">
-          Click the waveform to hear the take from there. Drag a note to move it, its edges
-          to change length — edges snap to the detected attacks. The line is the pitch that
-          was actually measured.
-        </span>
-
-        <div className="spacer" />
-
-        <button
-          className="btn"
-          onClick={() => (playhead === null ? void playFrom(0) : stopPreview())}
-        >
-          {playhead === null ? "▶ Play take" : "⏹ Stop"}
-        </button>
-        <button className="btn" onClick={deleteSelected} disabled={selected === null}>
-          Delete note
-        </button>
-        <button className="btn btn--primary" onClick={onApply} disabled={notes.length === 0}>
-          Add to track
-        </button>
+            ↻ Re-process with these settings
+          </button>
+        )}
       </div>
-    </div>
+
+      <footer className="listen__actions tedit__controls">
+        <div className="tedit__row">
+          <button className="btn btn--lg" onClick={toggle}>
+            {playhead === null ? "▶ Play" : "⏹ Stop"}
+          </button>
+
+          <div className="segmented" role="group" aria-label="What to play">
+            {SOURCES.map((option) => (
+              <button
+                key={option.value}
+                className={`segmented__option ${source === option.value ? "segmented__option--on" : ""}`}
+                onClick={() => changeSource(option.value)}
+                aria-pressed={source === option.value}
+                title={option.title}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <span className="field__hint">
+            Space plays. Click the waveform to start from there. Drag a note to hear and
+            move it, its edges to change length — edges snap to the detected attacks. The
+            line is the pitch that was actually measured.
+          </span>
+        </div>
+
+        <div className="tedit__row">
+          <label className="tedit__control">
+            <span className="field__label">Snap to</span>
+            <select
+              className="input"
+              value={gridDivisor}
+              
+              onChange={(e) => {
+                const divisor = Number(e.target.value);
+                onReprocess(
+                  preview.use_project_tempo,
+                  divisor === 0 ? 0 : Math.round(ppq / divisor),
+                  draft,
+                );
+              }}
+            >
+              {GRIDS.map((grid) => (
+                <option key={grid.label} value={grid.divisor}>
+                  {grid.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="tedit__check">
+            <input
+              type="checkbox"
+              checked={preview.use_project_tempo}
+              
+              onChange={(e) => onReprocess(e.target.checked, preview.quantize_ticks, draft)}
+            />
+            <span>Use the project tempo</span>
+          </label>
+
+          <button
+            className="btn"
+            onClick={joinWithNext}
+            disabled={selected === null || selected + 1 >= notes.length}
+            title="Join this note to the one after it (J)"
+          >
+            Join
+          </button>
+          <button
+            className="btn"
+            onClick={deleteSelected}
+            disabled={selected === null}
+            title="Delete the selected note (⌫)"
+          >
+            Delete note
+          </button>
+
+          <div className="spacer" />
+
+          <button className="btn" onClick={onDiscard}>
+            Discard take
+          </button>
+          <button
+            className="btn btn--primary btn--lg"
+            onClick={onApply}
+            disabled={notes.length === 0}
+          >
+            Add to track
+          </button>
+        </div>
+
+        <TuningDials
+          draft={draft}
+          applied={preview.tuning}
+          disabled={false}
+          onChange={setDraft}
+        />
+      </footer>
+    </>
   );
 }

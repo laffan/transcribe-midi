@@ -1,51 +1,7 @@
 /*
- * Full-bleed over the editor. The waveform needs width to be worth looking at, and
- * fine-tuning a transcription is a mode rather than a panel — you are doing that or you
- * are doing something else.
+ * The review stage inside the listen overlay. The frame — position, header, footer bar —
+ * belongs to ListenOverlay.css; what is here is only the canvas and its controls.
  */
-.tedit {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  background: var(--bg-0);
-  min-width: 0;
-}
-
-/* Full-bleed and `position: fixed`, so it owns every inset itself — there is no chrome
-   underneath it doing the job. */
-.tedit__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: calc(var(--space-2) + var(--safe-top)) calc(var(--space-3) + var(--safe-right))
-    var(--space-2) calc(var(--space-3) + var(--safe-left));
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-1);
-  min-width: 0;
-}
-
-.tedit__title {
-  margin: 0;
-  font-size: var(--text-md);
-  font-weight: 600;
-}
-
-.tedit__stat {
-  font-size: var(--text-xs);
-  color: var(--text-2);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.tedit__canvas {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--bg-1);
-}
 
 .tedit__canvas canvas {
   display: block;
@@ -53,15 +9,36 @@
   cursor: crosshair;
 }
 
+/*
+ * Floats over the result it would replace. Appears only when the dials have moved away
+ * from what produced what is on screen, so its presence *is* the message that there is
+ * something pending.
+ */
+.tedit__reprocess {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  box-shadow: var(--shadow-modal);
+}
+
 .tedit__controls {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.tedit__row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
-  padding: var(--space-2) calc(var(--space-3) + var(--safe-right))
-    calc(var(--space-2) + var(--safe-bottom)) calc(var(--space-3) + var(--safe-left));
-  border-top: 1px solid var(--border);
-  background: var(--bg-1);
+  min-width: 0;
+}
+
+.tedit__row .field__hint {
+  flex: 1 1 240px;
   min-width: 0;
 }
 
@@ -86,33 +63,114 @@
   cursor: pointer;
 }
 
-.tedit__controls .field__hint {
-  flex: 1 1 220px;
+/* ---------------------------------------------------------------- dials -- */
+
+/*
+ * Closed by default. These change how the take is *read*, which is a rarer thing to want
+ * than moving a note that came out wrong — but when it is what you want, nothing else
+ * will do, so it is a disclosure rather than a preference pane somewhere else.
+ */
+.tuning {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
   min-width: 0;
+}
+
+.tuning__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Says the result on screen did not come from the defaults — which is the thing you
+   want to know when a transcription looks unlike the last one. */
+.tuning__badge {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.tuning__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0 var(--space-2);
+}
+
+.tuning__dial {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tuning__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+}
+
+.tuning__value {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.tuning__dial input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.tuning__dial input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tuning__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tuning__foot .field__hint {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .tedit__row .field__hint {
+    display: none;
+  }
 }
 
 /* ---------------------------------------------------------------- phone -- */
 
 /*
- * This is a mode that takes the whole screen, which is the right shape for a phone
- * already — the waveform gets everything the controls do not. Below it, three buttons
- * and two settings have to share 390pt: the buttons take a row of their own so they are
- * full-size targets, and the settings take the row above.
+ * Three buttons and two settings sharing 390pt. The buttons take a row of their own so
+ * they are full-size targets — that part is in ListenOverlay.css with the rest of the
+ * frame — and what is left here is the settings row above them.
  *
- * The paragraph of instructions goes. It is three lines on a phone, it describes a
- * gesture vocabulary ("click", "drag its edges") that has been replaced by a different
- * one, and it would push the buttons off the bottom of the screen to say so.
+ * The paragraph of instructions goes. It is three lines on a phone, and it describes a
+ * gesture vocabulary ("click the waveform", "drag its edges") that touch has replaced
+ * with a different one, so it would cost the height to say something untrue.
  */
 @media (max-width: 430px) {
-  .tedit__controls {
+  .tedit__row {
     gap: var(--space-2);
-    padding-left: calc(var(--space-2) + var(--safe-left));
-    padding-right: calc(var(--space-2) + var(--safe-right));
-  }
-
-  .tedit__controls .field__hint,
-  .tedit__controls .spacer {
-    display: none;
   }
 
   .tedit__control,
@@ -124,20 +182,20 @@
   .tedit__check {
     white-space: normal;
   }
+}
 
-  .tedit__controls .btn {
-    flex: 1 1 0;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
-    line-height: var(--h-control);
-    text-align: center;
+/*
+ * A checkbox with its explanation beside it is a target the size of the checkbox. The
+ * whole label is the target — it already is, semantically; this makes it one to the
+ * finger as well.
+ */
+@media (pointer: coarse) {
+  .tedit__check {
+    padding: var(--space-2) 0;
+    min-height: var(--h-control);
   }
 
-  /* The title says what this is; the stat line repeats the numbers already drawn on the
-     waveform, and only one of the two fits beside a close button. */
-  .tedit__stat {
-    display: none;
+  .tuning__dial input[type="range"] {
+    height: 40px;
   }
 }

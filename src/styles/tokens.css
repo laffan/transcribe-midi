@@ -126,9 +126,10 @@
   --transition-fast: 90ms ease;
   --transition-med: 160ms ease;
 
-  /* Fixed chrome heights, referenced by the editor grid. */
+  /* Fixed chrome heights. The editor's toolbar is deliberately not among them — it
+     wraps to two rows in a narrow window, so a fixed height would clip it, and
+     `--h-titlebar` now sizes only the project picker's bar. */
   --h-titlebar: 40px;
-  --h-transport: 56px;
   --h-keyboard: 116px;
   --h-console: 132px;
   --w-inspector: 296px;
@@ -200,7 +201,6 @@
   :root {
     --h-control: 44px;
     --h-titlebar: 52px;
-    --h-transport: 60px;
   }
 }
 
@@ -213,7 +213,6 @@
 @media (max-width: 430px) {
   :root {
     --h-titlebar: 48px;
-    --h-transport: 52px;
     --h-keyboard: 124px;
     --h-console: 148px;
 
@@ -235,7 +234,6 @@
 @media (max-height: 460px) and (pointer: coarse) {
   :root {
     --h-titlebar: 48px;
-    --h-transport: 52px;
     --h-keyboard: 76px;
     --h-console: 108px;
   }

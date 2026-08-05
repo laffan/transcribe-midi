@@ -49,6 +49,12 @@ interface PianoRollProps {
    * preview is seeing what would move, not seeing the result in isolation.
    */
   preview?: NoteDiff | null;
+  /**
+   * True while another mode owns the keyboard — typing on the on-screen keys, or the
+   * listen overlay. The roll keeps its mouse behaviour and gives up its shortcuts, which
+   * is the only way `⌫`, `J` and the arrows can mean one thing at a time.
+   */
+  shortcutsSuspended?: boolean;
 }
 
 type Gesture =
@@ -76,6 +82,7 @@ export function PianoRoll({
   onScrub,
   loopRegion,
   preview,
+  shortcutsSuspended = false,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -636,7 +643,11 @@ export function PianoRoll({
     ppq,
     timeSignature,
     playheadTicks,
-    readOnly: Boolean(preview),
+    // A proposal on screen, or another mode holding the keyboard — the listen overlay
+    // and the on-screen keys both type. Either way the roll keeps its mouse behaviour
+    // and gives up its shortcuts, which is what lets ⌫, J and the arrows mean one thing
+    // at a time.
+    readOnly: Boolean(preview) || shortcutsSuspended,
   });
 
   // -- render --------------------------------------------------------------

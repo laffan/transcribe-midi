@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import type { WaveformPeaks } from "../../lib/types";
-import "./ListeningBar.css";
 
-interface ListeningBarProps {
+interface ListenCaptureProps {
   onStop: () => void;
   onCancel: () => void;
 }
@@ -21,23 +20,25 @@ const POLL_MS = 100;
  * that while there is still time to start again.
  *
  * The samples are already in Rust — `capture_poll` drains them there — so this is the
- * same `capture_waveform` the fine-tune editor uses, asked for repeatedly.
+ * same `capture_waveform` the fine-tune stage uses, asked for repeatedly.
  */
-export function ListeningBar({ onStop, onCancel }: ListeningBarProps) {
+export function ListenCapture({ onStop, onCancel }: ListenCaptureProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [peaks, setPeaks] = useState<WaveformPeaks>([]);
   const [seconds, setSeconds] = useState(0);
+  const [level, setLevel] = useState(0);
   const [atLimit, setAtLimit] = useState(false);
-  const [width, setWidth] = useState(600);
+  const [size, setSize] = useState({ width: 900, height: 240 });
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
       try {
         const status = await api.capturePoll();
         setSeconds(status.seconds);
+        setLevel(status.level);
         setAtLimit(status.at_limit);
         if (status.seconds > 0) {
-          setPeaks(await api.captureWaveform(0, status.seconds, Math.round(width)));
+          setPeaks(await api.captureWaveform(0, status.seconds, Math.round(size.width)));
         }
       } catch {
         // A failed poll is not worth reporting: the next one is 100 ms away, and the
@@ -45,17 +46,18 @@ export function ListeningBar({ onStop, onCancel }: ListeningBarProps) {
       }
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [width]);
+  }, [size.width]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) setWidth(Math.max(120, rect.width));
+      if (rect) {
+        setSize({ width: Math.max(240, rect.width), height: Math.max(120, rect.height) });
+      }
     });
-    observer.observe(canvas);
+    observer.observe(canvas.parentElement ?? canvas);
     return () => observer.disconnect();
   }, []);
 
@@ -65,7 +67,7 @@ export function ListeningBar({ onStop, onCancel }: ListeningBarProps) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const height = 40;
+    const { width, height } = size;
     const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
       canvas.width = width * dpr;
@@ -81,34 +83,51 @@ export function ListeningBar({ onStop, onCancel }: ListeningBarProps) {
     ctx.beginPath();
     peaks.forEach(([min, max], index) => {
       const x = index + 0.5;
-      ctx.moveTo(x, mid - max * (mid - 2));
-      ctx.lineTo(x, mid - min * (mid - 2));
+      ctx.moveTo(x, mid - max * (mid - 8));
+      ctx.lineTo(x, mid - min * (mid - 8));
     });
     ctx.stroke();
-  }, [peaks, width]);
+  }, [peaks, size]);
 
   return (
-    <div className="listening">
-      <span className="listening__dot" aria-hidden="true" />
-      <span className="listening__label">
-        Listening
-        <span className="mono listening__clock">{seconds.toFixed(1)}s</span>
-      </span>
+    <>
+      <div className="listen__body listen__body--capture">
+        <div className="capture__wave">
+          <canvas ref={canvasRef} style={{ width: size.width, height: size.height }} />
+        </div>
 
-      <canvas ref={canvasRef} className="listening__wave" style={{ height: 40 }} />
+        <div className="capture__readout">
+          <span className="capture__dot" aria-hidden="true" />
+          <span className="capture__clock mono">{seconds.toFixed(1)}s</span>
+          <span className="capture__meter" aria-label="Input level">
+            <span
+              className="capture__meter-fill"
+              style={{ width: `${Math.min(100, level * 130)}%` }}
+            />
+          </span>
+          <span className="field__hint">One note at a time — chords come back as nonsense.</span>
+        </div>
 
-      {atLimit && (
-        <span className="listening__limit">
-          That is as long as one take can be — stop and transcribe what you have.
+        {atLimit && (
+          <p className="capture__limit">
+            That is as long as one take can be — stop and transcribe what you have.
+          </p>
+        )}
+      </div>
+
+      <footer className="listen__actions">
+        <span className="field__hint">
+          Nothing is committed yet. Stopping transcribes the take and opens it for
+          fine-tuning; the recording is kept until you accept or discard the notes.
         </span>
-      )}
-
-      <button className="btn btn--primary" onClick={onStop}>
-        Stop &amp; transcribe
-      </button>
-      <button className="btn" onClick={onCancel}>
-        Cancel
-      </button>
-    </div>
+        <div className="spacer" />
+        <button className="btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="btn btn--primary btn--lg" onClick={onStop}>
+          Stop &amp; transcribe
+        </button>
+      </footer>
+    </>
   );
 }

@@ -75,6 +75,7 @@ pub enum EditRequest {
     Resize { track: usize, indices: Vec<usize>, delta_ticks: i64 },
     SetVelocity { track: usize, indices: Vec<usize>, velocity: u8 },
     Quantize { track: usize, indices: Vec<usize>, grid_ticks: u32 },
+    Join { track: usize, indices: Vec<usize> },
     Paste { track: usize, notes: Vec<Note>, at_ticks: Ticks },
 }
 
@@ -162,6 +163,7 @@ pub fn apply_edit(state: State<'_, AppState>, request: EditRequest) -> CommandRe
         EditRequest::Quantize { track, indices, grid_ticks } => {
             edits::quantize(&open.session, track, &indices, grid_ticks)?
         }
+        EditRequest::Join { track, indices } => edits::join_notes(&open.session, track, &indices)?,
         EditRequest::Paste { track, notes, at_ticks } => edits::paste(track, &notes, at_ticks),
     };
 

@@ -11,8 +11,12 @@ import { listen } from "@tauri-apps/api/event";
 
 import { mockBackend, mockTransport } from "./mockBackend";
 import type {
+  AiEdit,
   AiModelsResponse,
+  AiProvider,
+  AuditionSource,
   CaptureStatus,
+  TranscribeTuning,
   TranscriptionPreview,
   AiProposal,
   AiStatus,
@@ -164,8 +168,12 @@ export const api = {
   aiClearKey: () => call<AiStatus>("ai_clear_key"),
   aiModels: () => call<AiModelsResponse>("ai_models"),
   aiSetModel: (model: string) => call<AiStatus>("ai_set_model", { model }),
+  aiSetProvider: (provider: AiProvider, localUrl: string) =>
+    call<AiStatus>("ai_set_provider", { provider, localUrl }),
   aiPropose: (track: number, prompt: string, selection: number[], target: AiTarget) =>
     call<AiProposal>("ai_propose", { track, prompt, selection, target }),
+  /** Hand back adjusted notes; Rust validates them and re-derives its own diff. */
+  aiSetNotes: (notes: Note[]) => call<AiEdit>("ai_set_notes", { notes }),
   aiAccept: () => call<EditorState>("ai_accept"),
   aiReject: () => call<void>("ai_reject"),
 
@@ -173,35 +181,66 @@ export const api = {
 
   captureStart: () => call<CaptureStatus>("capture_start"),
   capturePoll: () => call<CaptureStatus>("capture_poll"),
-  captureTranscribe: (track: number, useProjectTempo: boolean, quantizeTicks: number) =>
+  captureTranscribe: (
+    track: number,
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+    tuning: TranscribeTuning,
+  ) =>
     call<TranscriptionPreview>("capture_transcribe", {
       track,
       useProjectTempo,
       quantizeTicks,
+      tuning,
     }),
-  captureRetranscribe: (useProjectTempo: boolean, quantizeTicks: number) =>
-    call<TranscriptionPreview>("capture_retranscribe", { useProjectTempo, quantizeTicks }),
+  captureRetranscribe: (
+    useProjectTempo: boolean,
+    quantizeTicks: number,
+    tuning: TranscribeTuning,
+  ) =>
+    call<TranscriptionPreview>("capture_retranscribe", {
+      useProjectTempo,
+      quantizeTicks,
+      tuning,
+    }),
   captureLoadFile: (
     path: string,
     track: number,
     useProjectTempo: boolean,
     quantizeTicks: number,
+    tuning: TranscribeTuning,
   ) =>
     call<TranscriptionPreview>("capture_load_file", {
       path,
       track,
       useProjectTempo,
       quantizeTicks,
+      tuning,
     }),
   captureWaveform: (fromSeconds: number, toSeconds: number, buckets: number) =>
     call<WaveformPeaks>("capture_waveform", { fromSeconds, toSeconds, buckets }),
-  captureSetNotes: (notes: Note[]) => call<number>("capture_set_notes", { notes }),
-  capturePreviewPlay: (fromSeconds: number) =>
-    call<void>("capture_preview_play", { fromSeconds }),
-  capturePreviewStop: () => call<void>("capture_preview_stop"),
-  capturePreviewPosition: () => call<number | null>("capture_preview_position"),
+  /** How far through the analysis Rust is, 0–1. */
+  captureProgress: () => call<number>("capture_progress"),
+  /**
+   * Hand the adjusted notes to Rust and take back what it kept. The list can come back
+   * shorter or shortened — the take was one voice, and Rust is where that is enforced.
+   */
+  captureSetNotes: (notes: Note[]) => call<Note[]>("capture_set_notes", { notes }),
   captureAccept: () => call<EditorState>("capture_accept"),
   captureCancel: () => call<void>("capture_cancel"),
+
+  // --- Hearing a take back --------------------------------------------------
+  //
+  // One play/stop for both sources. Which of them makes the sound is Rust's business;
+  // the position that comes back is the one to draw a playhead with either way.
+
+  /** Play the recorded take: its notes, its audio, or both. */
+  auditionTake: (fromSeconds: number, source: AuditionSource) =>
+    call<void>("audition_take", { fromSeconds, source }),
+  /** Play the notes a described edit is offering. There is no recording to compare. */
+  auditionNotes: (fromSeconds: number) => call<void>("audition_notes", { fromSeconds }),
+  auditionStop: () => call<void>("audition_stop"),
+  auditionPosition: () => call<number | null>("audition_position"),
 
   copyFileToPasteboard: (path: string) => call<void>("copy_file_to_pasteboard", { path }),
   shareFile: (path: string) => call<void>("share_file", { path }),

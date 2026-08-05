@@ -15,12 +15,14 @@ into an AUv3 app extension, so the plugin and the app are two thin shells over o
 
 ```
 crates/unplugged-core/       Domain model, sequencer, command layer, SMF, persistence,
-                             music theory, AI tool surface. Pure Rust. No Tauri, no I/O
-                             beyond the filesystem, no platform code.
+                             music theory, audition scheduling, AI tool surface. Pure
+                             Rust. No Tauri, no I/O beyond the filesystem, no platform
+                             code.
 crates/unplugged-audio/      Audio engine binding: Rust API, C ABI to Swift, null backend
                              off-Apple so tests run anywhere.
 crates/unplugged-midi/       External MIDI input (CoreMIDI via midir), null backend off-Apple.
-crates/unplugged-ai/         Anthropic client + tool loop. The API key never leaves this crate.
+crates/unplugged-ai/         Provider clients (Anthropic, OpenAI-compatible) + tool loop.
+                             The API key never leaves this crate.
 crates/unplugged-transcribe/ Audio-to-MIDI DSP (YIN, spectral flux, tempo). Pure math,
                              no audio I/O, no dependencies.
 crates/unplugged-plugin/     The C ABI the AUv3 extension calls. Wraps core. No Tauri.
@@ -95,20 +97,29 @@ you touch one substantially, split it as part of the change:
 
 | File | Lines | Suggested split |
 |---|---|---|
-| `crates/unplugged-core/src/ai.rs` | ~2070 | `ai/` dir: tool defs, workspace, diff/transaction, rng, tests |
+| `crates/unplugged-core/src/ai.rs` | ~2030 | `ai/` dir: tool defs, workspace, transaction, rng, tests |
 | `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
 | `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
-| `crates/unplugged-core/src/command.rs` | ~840 | commands vs. history vs. tests |
-| `src/features/editor/Editor.tsx` | ~830 | extract keyboard handling + selection logic hooks |
 | `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
-| `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
 | `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
 
-`src/features/editor/PianoRoll.tsx` came off this list in Phase 11: adding touch gestures
-pushed it to 810, so it split along the seams the register had already named — a
-subcomponent (`RollToolbar.tsx`) and two interaction hooks (`rollGestures.ts`,
-`useRollShortcuts.ts`). It is 672 now. That is the intended shape of the rule working: the
-register is a list of files waiting for a reason to be split, not a list of exemptions.
+Five files have come off this list by being touched, which is the rule working as
+intended — the register is a list of files waiting for a reason to be split, not a list
+of exemptions:
+
+- **`Editor.tsx`** (830 → 625) — transport and capture state into `useTransport` and
+  `usePending`, panels into `Toolbar`, `TrackList` and `Inspector`.
+- **`PianoRoll.tsx`** (750 → 683) — touch gestures pushed it to 810, so it split along
+  the seams the register had already named: a subcomponent (`RollToolbar.tsx`) and two
+  interaction hooks (`rollGestures.ts`, `useRollShortcuts.ts`).
+- **`TranscribeEditor.tsx`** (550 → 442) — geometry and canvas drawing into
+  `transcribeGeometry.ts` and `transcribeDraw.ts`.
+- **`command.rs`** (980) — now a directory: `command/mod.rs` (session and history),
+  `command/edits.rs` (the gestures), `command/tests.rs`.
+- **`unplugged-transcribe/src/lib.rs`** (1090 → 601) — tests into a sibling `tests.rs`.
+
+`ai.rs` also shed its note diff to `core::diff`, which is a start on its own row rather
+than a discharge of it.
 
 ## Coding standards
 
@@ -180,6 +191,8 @@ test or a greppable comment chain:
 | Shared data path `~/Library/Application Support/Unplugged` | `shared_container.rs::HOME_RELATIVE_DIR`, `UnpluggedAudioUnit.swift::homeRelativeDataDirectory`, `plugin/Support/UnpluggedAU.entitlements` (tested: `the_three_places_that_name_the_shared_path_agree`) |
 | AU identity `aumi` / `Unpl` / `Lffn` | `plugin/Support/Info.plist`, `scripts/verify-plugin.sh`, any docs |
 | `CRenderedEvent` layout | `crates/unplugged-plugin/src/lib.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` |
+| Tool definitions | described once in `unplugged-core::ai`; `openai::tool_schema` rewraps them, and a second set of definitions would be a second place to forget |
+| Only the read path decrypts the API key | `Keychain.swift` ↔ `keychain.rs` — status is answered from item *attributes*, never `kSecReturnData` (tested: `only_the_read_path_asks_the_keychain_for_the_secret`) |
 | Bundle-id prefix rule | extension id must be prefixed by its container app's id (`project.yml` explains) |
 
 ## Project format
@@ -205,7 +218,8 @@ them a place on disk needs a schema bump and a lifecycle, and is future work.
 - The Anthropic API key lives in the platform Keychain and is read only inside
   `unplugged-ai`, immediately before a request. It must never reach the webview, a config
   file, or a log.
-- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings.
+- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings. This
+  holds for a local server too, where it is the only way to know what is loaded.
 - Logic's note clipboard format is proprietary; do not attempt to reverse-engineer it.
   Interchange is SMF files.
 - AI edits operate through the fixed tool surface against a scratch workspace and land as
@@ -280,11 +294,20 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 
 ## Editor shortcuts (for manual testing)
 
-`Space` play/stop · `R` record · `L` listen/transcribe · `⌘K` prompt · `⌘Z`/`⇧⌘Z`
-undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q` quantize ·
-`⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
-`W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
-click empty grid draws, drag marquee-selects.
+`Space` play/pause · `R` record · `L` listen/transcribe · `J` join selection · `⌘K`
+prompt · `⌘Z`/`⇧⌘Z` undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead ·
+`⌘Q` quantize · `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note ·
+`⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects.
+
+**Two modes take the keyboard, and while either is on the editor's shortcuts are
+suspended.** This is deliberate: the letter keys mean different things in each, and there
+is no arrangement in which `L` can be both Listen and D.
+
+- **The listen overlay**, while it is up. `Space` plays the take back rather than the
+  project; `⌫` deletes the selected note; `J` joins it to the note after it.
+- **Typing mode**, toggled from the on-screen keyboard panel and left with `Esc`. `A`–`L`
+  + `W/E/T/Y/U` play the keys, `Z`/`X` shift the octave. The panel is outlined while it
+  is on, because "why did Space stop playing?" needs an answer on screen.
 
 On a touchscreen: one finger does what the mouse does — draw, select, drag, resize, scrub.
 **Two fingers pan the roll, and moving them apart or together zooms time.** That is the

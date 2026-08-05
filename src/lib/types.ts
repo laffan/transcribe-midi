@@ -113,6 +113,7 @@ export type EditRequest =
   | { kind: "resize"; track: number; indices: number[]; delta_ticks: number }
   | { kind: "set_velocity"; track: number; indices: number[]; velocity: number }
   | { kind: "quantize"; track: number; indices: number[]; grid_ticks: number }
+  | { kind: "join"; track: number; indices: number[] }
   | { kind: "paste"; track: number; notes: Note[]; at_ticks: number };
 
 // --- Transport (phase 2) ---------------------------------------------------
@@ -195,13 +196,27 @@ export interface PlatformCapabilities {
 
 // --- AI (phase 6) ----------------------------------------------------------
 
+/**
+ * Which service answers a described edit. Mirrors `Provider` in `unplugged-ai`.
+ *
+ * `lm_studio` is named for the server this was built against rather than "local",
+ * because what it can do depends on the server — a model with no tool support will not
+ * work here however local it is.
+ */
+export type AiProvider = "anthropic" | "lm_studio";
+
 export interface AiStatus {
   has_key: boolean;
   /** Last four characters. The key itself never crosses this boundary. */
   key_hint: string | null;
   /** False on a build without a Keychain, where the key lasts until the app quits. */
   key_persists: boolean;
+  provider: AiProvider;
+  /** The model for the provider in use, not whichever was configured last. */
   model: string | null;
+  local_url: string;
+  /** False while the chosen provider is still missing a key or a model. */
+  ready: boolean;
 }
 
 export interface ModelInfo {
@@ -255,6 +270,19 @@ export interface AiProposal {
   empty: boolean;
 }
 
+/**
+ * What changes when the proposed notes are adjusted by hand.
+ *
+ * Only the parts that can change: the narration, the steps and the token counts describe
+ * how the proposal was arrived at, and moving a note does not revise history.
+ */
+export interface AiEdit {
+  diff: NoteDiff;
+  preview_notes: Note[];
+  summary: string;
+  empty: boolean;
+}
+
 // --- Audio to MIDI (phase 7) -----------------------------------------------
 
 export interface CaptureStatus {
@@ -293,6 +321,35 @@ export interface Analysis {
   silence_floor: number;
 }
 
+/**
+ * The judgement calls in the analysis, as numbers. Mirrors `TranscribeTuning` in
+ * `crates/unplugged-transcribe`.
+ *
+ * Rust clamps every one of these, so a value out of range is a dull result rather than a
+ * broken pipeline — but the controls should not offer one anyway.
+ */
+export interface TranscribeTuning {
+  /** 0–1. How readily a repeated note is split from its neighbour. */
+  split_sensitivity: number;
+  /** Shortest note kept, in milliseconds. */
+  min_note_ms: number;
+  /** Semitones the pitch must move before it counts as a new note. */
+  pitch_tolerance_semitones: number;
+  /** Silence threshold, as a fraction of the take's peak. */
+  noise_floor: number;
+  /** How sure the pitch tracker must be for a frame to count. */
+  min_confidence: number;
+}
+
+/** Must match `TranscribeTuning::default()` — the tuning every take is first read with. */
+export const DEFAULT_TUNING: TranscribeTuning = {
+  split_sensitivity: 0.5,
+  min_note_ms: 60,
+  pitch_tolerance_semitones: 0.5,
+  noise_floor: 0.02,
+  min_confidence: 0.55,
+};
+
 export interface TranscriptionPreview {
   notes: DetectedNote[];
   tempo_bpm: number;
@@ -304,10 +361,20 @@ export interface TranscriptionPreview {
   analysis: Analysis;
   use_project_tempo: boolean;
   quantize_ticks: number;
+  tuning: TranscribeTuning;
 }
 
 /** Min/max pairs for drawing a waveform. */
 export type WaveformPeaks = [number, number][];
+
+/**
+ * What playing a take back should sound. Mirrors `AuditionSource` in
+ * `src-tauri/src/audition.rs`.
+ *
+ * `midi` is the default: the notes are the thing being judged, and the recording is what
+ * you compare them against rather than the other way round.
+ */
+export type AuditionSource = "midi" | "take" | "both";
 
 /** Mirrors `BuildInfo` in unplugged-core. */
 export interface BuildInfo {

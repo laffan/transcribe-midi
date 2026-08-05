@@ -111,7 +111,12 @@ pub struct AppState {
     pub mic: Box<dyn CaptureBackend>,
     /// Plays a captured take back. You cannot judge a transcription you have not heard.
     pub preview: Box<dyn PreviewBackend>,
+    /// Plays the *notes* a take became, which is the thing actually being judged.
+    pub audition: crate::audition::Audition,
     pub capture: crate::transcribe::SharedCapture,
+    /// How far the analysis running on the blocking pool has got. Shared with that
+    /// thread, so it cannot live behind the capture lock the analysis is waiting on.
+    pub transcribe_progress: Arc<crate::transcribe::Progress>,
     /// The AI proposal awaiting accept or reject.
     ///
     /// Held here rather than sent to the frontend on purpose: it contains a
@@ -131,7 +136,9 @@ impl AppState {
             ai_prefs: Mutex::new(crate::ai::AiPreferences::load(&app_data_dir)),
             mic: unplugged_audio::new_capture(),
             preview: unplugged_audio::new_preview(),
+            audition: Default::default(),
             capture: Mutex::new(Default::default()),
+            transcribe_progress: Default::default(),
             pending_ai: Mutex::new(None),
             data_dir: app_data_dir,
         }

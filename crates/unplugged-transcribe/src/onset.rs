@@ -74,12 +74,33 @@ pub struct OnsetTrack {
 /// wobble is a fraction of a percent and a real attack is a large fraction of one, so a
 /// single scale-free threshold separates them at any recording level.
 pub fn spectral_flux(frames: &[&[f32]], window: &[f32]) -> Vec<f32> {
+    spectral_flux_reporting(frames, window, &mut |_| {})
+}
+
+/// [`spectral_flux`], saying how far through it is as it goes.
+///
+/// One FFT per frame is the slowest thing in onset detection and the second slowest in
+/// the whole pipeline, so a progress bar that ignored it would sit still for most of the
+/// time it was on screen. `progress` receives 0–1 and is called every few frames, not
+/// every frame — the caller may be doing real work in it.
+pub fn spectral_flux_reporting(
+    frames: &[&[f32]],
+    window: &[f32],
+    progress: &mut dyn FnMut(f32),
+) -> Vec<f32> {
+    /// How often to report, in frames. Frequent enough to look continuous on a bar that
+    /// is on screen for a second or two.
+    const REPORT_EVERY: usize = 16;
+
     let mut scratch: Vec<Complex> = Vec::new();
     let mut previous: Vec<f32> = Vec::new();
     let mut raw: Vec<f32> = Vec::with_capacity(frames.len());
     let mut energy: Vec<f32> = Vec::with_capacity(frames.len());
 
-    for frame in frames {
+    for (index, frame) in frames.iter().enumerate() {
+        if index % REPORT_EVERY == 0 {
+            progress(index as f32 / frames.len().max(1) as f32);
+        }
         let spectrum = magnitude_spectrum(frame, window, &mut scratch);
         let total: f32 = spectrum.iter().sum();
 
@@ -177,7 +198,18 @@ pub fn pick_peaks(flux: &[f32], params: OnsetParams) -> Vec<usize> {
 
 /// Flux and onsets together.
 pub fn detect(frames: &[&[f32]], window: &[f32], params: OnsetParams) -> OnsetTrack {
-    let flux = spectral_flux(frames, window);
+    detect_reporting(frames, window, params, &mut |_| {})
+}
+
+/// [`detect`], reporting progress through the flux stage. Peak-picking is a single pass
+/// over one value per frame and finishes too fast to be worth reporting from.
+pub fn detect_reporting(
+    frames: &[&[f32]],
+    window: &[f32],
+    params: OnsetParams,
+    progress: &mut dyn FnMut(f32),
+) -> OnsetTrack {
+    let flux = spectral_flux_reporting(frames, window, progress);
     let onsets = pick_peaks(&flux, params);
     OnsetTrack { flux, onsets }
 }
