@@ -15,12 +15,14 @@ into an AUv3 app extension, so the plugin and the app are two thin shells over o
 
 ```
 crates/unplugged-core/       Domain model, sequencer, command layer, SMF, persistence,
-                             music theory, AI tool surface. Pure Rust. No Tauri, no I/O
-                             beyond the filesystem, no platform code.
+                             music theory, audition scheduling, AI tool surface. Pure
+                             Rust. No Tauri, no I/O beyond the filesystem, no platform
+                             code.
 crates/unplugged-audio/      Audio engine binding: Rust API, C ABI to Swift, null backend
                              off-Apple so tests run anywhere.
 crates/unplugged-midi/       External MIDI input (CoreMIDI via midir), null backend off-Apple.
-crates/unplugged-ai/         Anthropic client + tool loop. The API key never leaves this crate.
+crates/unplugged-ai/         Provider clients (Anthropic, OpenAI-compatible) + tool loop.
+                             The API key never leaves this crate.
 crates/unplugged-transcribe/ Audio-to-MIDI DSP (YIN, spectral flux, tempo). Pure math,
                              no audio I/O, no dependencies.
 crates/unplugged-plugin/     The C ABI the AUv3 extension calls. Wraps core. No Tauri.
@@ -33,8 +35,14 @@ src-tauri/                   Tauri commands. Thin: parse args, call a crate, map
 src/                         React frontend.
   lib/api.ts                 The ONLY place the frontend talks to the backend.
   features/<name>/           One directory per feature; components + css side by side.
+  styles/tokens.css          Colour, spacing, type, chrome heights, safe-area insets,
+                             and the breakpoint ladder every media query in the app uses.
+  styles/touch.css           The finger layer: what changes when the pointer is coarse,
+                             independently of how wide the screen is.
 scripts/                     install-plugin.sh / verify-plugin.sh — build, install,
-                             register and interrogate the plugin.
+                             register and interrogate the plugin. build-ios.sh — the
+                             preflight the iOS build needs before `tauri ios build`
+                             means anything.
 ```
 
 Dependency direction is one-way and enforced by the workspace: `unplugged-core` depends on
@@ -79,25 +87,38 @@ TypeScript/TSX, Swift, CSS, shell. Tests count toward a file's total; splitting 
 a sibling `tests.rs` / `Foo.test.ts` is an accepted and encouraged way to comply.
 
 When a file approaches the limit, split along seams that already exist in its structure:
-a Rust module becomes a directory (`ai.rs` → `ai/tools.rs`, `ai/workspace.rs`,
-`ai/diff.rs`); a React component sheds subcomponents and hooks into siblings; a CSS file
-splits by the component it styles. Do not comply by deleting comments or compressing
-style — the limit exists to force *modularity*, not terseness.
+a Rust module becomes a directory (`ai.rs` became `ai/tools.rs`, `ai/workspace.rs`,
+`ai/generate.rs` and the rest); a React component sheds subcomponents and hooks into
+siblings; a CSS file splits by the component it styles. Do not comply by deleting comments
+or compressing style — the limit exists to force *modularity*, not terseness.
 
-**Current violations (debt register).** These predate the rule. Do not add to them; when
-you touch one substantially, split it as part of the change:
+The seam to look for is a *reason to change*, not a line count. `smf.rs` split by the
+direction data is moving; `music.rs` by musical concept; `PianoRoll.tsx` between what it
+paints and what it listens to. A split that leaves two files needing to be read together
+has moved lines without moving a boundary.
 
-| File | Lines | Suggested split |
-|---|---|---|
-| `crates/unplugged-core/src/ai.rs` | ~2070 | `ai/` dir: tool defs, workspace, diff/transaction, rng, tests |
-| `crates/unplugged-core/src/sequencer.rs` | ~1150 | scheduling vs. timeline vs. tests |
-| `crates/unplugged-core/src/smf.rs` | ~860 | read vs. write vs. tests |
-| `crates/unplugged-core/src/command.rs` | ~840 | commands vs. history vs. tests |
-| `src/features/editor/Editor.tsx` | ~830 | extract keyboard handling + selection logic hooks |
-| `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
-| `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
-| `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
-| `src/features/editor/PianoRoll.tsx` | ~750 | grid math + interaction hooks out |
+**The debt register is empty.** Every file in the repository is under the limit. It was a
+list of nine when the rule was written; the last five came off in one pass, and the way
+they came off is the point — each split along a seam the register had already named, and
+none of them by deleting a comment.
+
+| Was | Became |
+|---|---|
+| `core/ai.rs` (2030) | `ai/` — `context`, `tools`, `schema`, `workspace`, `ops`, `generate`, `diff`, `rng`, `tests/` (six files), laid out along the path a request takes |
+| `core/sequencer.rs` (1150) | `sequencer/` — `event`, `timeline`, `scheduler`, `tests/` (seven files) |
+| `core/smf.rs` (860) | `smf/` — split by the direction data is moving: `read`, `write`, `import`, `tempo`, `tests/` |
+| `core/music.rs` (810) | `music/` — a file per concept: `pitch`, `scale`, `key`, `chord`, `roman`, `tests/` |
+| `core/command.rs` (980) | `command/` — `mod` (session and history), `edits` (the gestures), `tests` |
+| `unplugged-plugin/src/lib.rs` (765) | `abi` (the C boundary), `plugin` (the logic behind it), `event`, `tests/` |
+| `unplugged-transcribe/src/lib.rs` (1090) | tests into a sibling `tests.rs` |
+| `Editor.tsx` (830) | `useTransport`, `usePending`; panels into `Toolbar`, `TrackList`, `Inspector` |
+| `PianoRoll.tsx` (750) | `RollToolbar`, `rollGestures`, `useRollShortcuts`, `pianoRollPaint`, `pianoRollTheme` |
+| `TranscribeEditor.tsx` (550) | `transcribeGeometry`, `transcribeDraw` |
+
+The largest file left is 656 lines (`core/store.rs`), with `src-tauri/src/ai.rs` a line
+behind it — comfortably under, but the two worth watching. **Do not start a new register.**
+A file that reaches the limit gets split in the change that took it there, not written down
+and left for later; that is what the last five were waiting for and it took a year.
 
 ## Coding standards
 
@@ -139,6 +160,21 @@ directly (this is also what keeps the browser mock working). Styling is hand-rol
 against the design tokens in `src/styles/tokens.css`; no CSS-in-JS, no UI framework.
 State that belongs to a feature stays in that feature's directory.
 
+**Responsive rules answer two separate questions.** *Width* decides what the layout is and
+uses one of the five rungs written out in `tokens.css` — never a new number. *Pointer*
+decides how big things have to be and whether hover means anything, and keys off
+`pointer: coarse` / `hover: none` at any width. Keeping them apart is what stops an iPad
+at 1024px getting cursor-sized hit targets and a 400px-wide desktop window getting
+finger-sized ones. Every `:hover` rule belongs inside `@media (hover: hover)`: iOS
+synthesises a hover on tap and leaves it there, so an unguarded one reads as a stuck
+control. A phone rule lives in the same file as the thing it restyles; only what is
+genuinely cross-cutting goes in `touch.css`.
+
+**Insets go through the `--safe-*` variables**, never a bare `env(safe-area-inset-*)`. A
+fixed grid track has to fold the inset into its own height, and repeating the `env()`
+fallback at every such site is how two of them drift apart. It also means the whole phone
+layout can be checked in a desktop browser by overriding four variables.
+
 **Dependencies.** Adding one is a decision, not a reflex: it must be verified working on
 both Apple targets, and recorded in DECISIONS.md with the alternatives considered. The DSP
 crate has zero dependencies on purpose; keep it that way.
@@ -154,6 +190,8 @@ test or a greppable comment chain:
 | Shared data path `~/Library/Application Support/Unplugged` | `shared_container.rs::HOME_RELATIVE_DIR`, `UnpluggedAudioUnit.swift::homeRelativeDataDirectory`, `plugin/Support/UnpluggedAU.entitlements` (tested: `the_three_places_that_name_the_shared_path_agree`) |
 | AU identity `aumi` / `Unpl` / `Lffn` | `plugin/Support/Info.plist`, `scripts/verify-plugin.sh`, any docs |
 | `CRenderedEvent` layout | `crates/unplugged-plugin/src/lib.rs` ↔ `plugin/Support/UnpluggedPluginFFI.h` |
+| Tool definitions | described once in `unplugged-core::ai`; `openai::tool_schema` rewraps them, and a second set of definitions would be a second place to forget |
+| Only the read path decrypts the API key | `Keychain.swift` ↔ `keychain.rs` — status is answered from item *attributes*, never `kSecReturnData` (tested: `only_the_read_path_asks_the_keychain_for_the_secret`) |
 | Bundle-id prefix rule | extension id must be prefixed by its container app's id (`project.yml` explains) |
 
 ## Project format
@@ -179,7 +217,8 @@ them a place on disk needs a schema bump and a lifecycle, and is future work.
 - The Anthropic API key lives in the platform Keychain and is read only inside
   `unplugged-ai`, immediately before a request. It must never reach the webview, a config
   file, or a log.
-- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings.
+- The model list comes from `GET /v1/models` at runtime. No hardcoded model strings. This
+  holds for a local server too, where it is the only way to know what is loaded.
 - Logic's note clipboard format is proprietary; do not attempt to reverse-engineer it.
   Interchange is SMF files.
 - AI edits operate through the fixed tool surface against a scratch workspace and land as
@@ -206,14 +245,47 @@ breakage without a Mac; they do not catch Swift, which only a Mac build verifies
 which is why every Swift-touching change ends with "run `scripts/install-plugin.sh
 --debug` and send the errors" rather than a claim of success.
 
+For anything that touches layout, also:
+
+```bash
+npm run preview -- --port 4173 &                    # serve the build
+npm install --no-save playwright-core               # not a dependency; see the script
+node scripts/check-phone-layout.mjs
+```
+
+It drives the app at six screen sizes with each device's real safe-area insets simulated,
+and asserts what a phone actually breaks on: horizontal overflow, controls under the
+status bar or home indicator, hit targets below 44pt, text fields under 16px (the
+threshold at which WKWebView zooms in on focus and never zooms back out), and bars whose
+`overflow: hidden` is quietly eating a control. Then it drives real multi-touch at the
+piano roll. It is not a substitute for a device — see the "Not verified" list in
+DECISIONS.md Phase 11 — but every failure it reports is real.
+
 On a Mac:
 
 ```bash
 npm run tauri dev                    # the standalone app
+npm run build:ios                    # the iOS app — see below
+npx tauri ios dev                    # …on a simulator or a connected device
 scripts/install-plugin.sh --debug    # build + install + register the AUv3
 scripts/verify-plugin.sh             # what is installed / registered / offered to hosts
 auval -v aumi Unpl Lffn              # full AU validation
 ```
+
+`npm run build:ios` wraps `tauri ios build`, which needs five things this repository
+cannot provide and does not report clearly when they are missing: macOS, full Xcode
+rather than the Command Line Tools, CocoaPods, the three Rust iOS targets, and the
+generated Xcode project under `src-tauri/gen/apple` — which is untracked, because a
+pbxproj is unreviewable in a diff and the tree is regenerable. The script checks each,
+runs `tauri ios init` when there is no project yet, and passes every argument through
+(`npm run build:ios -- --debug`, `-- --no-sign`, `-- --open`). Its header explains why
+each check is there; `npm run build:ios -- --help` prints it.
+
+It also copies `NSMicrophoneUsageDescription` from `src-tauri/Info.plist` into the
+generated iOS plist on every build. That is the one entry the app genuinely cannot ship
+without — iOS kills the process the moment it touches the input device rather than
+denying permission — and the file it has to live in is rewritten by `tauri ios init`, so
+setting it by hand does not stay set.
 
 Builds are stamped (version + short commit + dirty flag) via `unplugged-core/build.rs`,
 shown in the app titlebar and the plugin window. When testing "did my fix load", trust the
@@ -221,11 +293,25 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 
 ## Editor shortcuts (for manual testing)
 
-`Space` play/stop · `R` record · `L` listen/transcribe · `⌘K` prompt · `⌘Z`/`⇧⌘Z`
-undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q` quantize ·
-`⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
-`W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
-click empty grid draws, drag marquee-selects.
+`Space` play/pause · `R` record · `L` listen/transcribe · `J` join selection · `⌘K`
+prompt · `⌘Z`/`⇧⌘Z` undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead ·
+`⌘Q` quantize · `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note ·
+`⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects.
+
+**Two modes take the keyboard, and while either is on the editor's shortcuts are
+suspended.** This is deliberate: the letter keys mean different things in each, and there
+is no arrangement in which `L` can be both Listen and D.
+
+- **The listen overlay**, while it is up. `Space` plays the take back rather than the
+  project; `⌫` deletes the selected note; `J` joins it to the note after it.
+- **Typing mode**, toggled from the on-screen keyboard panel and left with `Esc`. `A`–`L`
+  + `W/E/T/Y/U` play the keys, `Z`/`X` shift the octave. The panel is outlined while it
+  is on, because "why did Space stop playing?" needs an answer on screen.
+
+On a touchscreen: one finger does what the mouse does — draw, select, drag, resize, scrub.
+**Two fingers pan the roll, and moving them apart or together zooms time.** That is the
+only way to navigate the roll without a wheel, so it is the first thing to try if the grid
+appears to be stuck where it opened.
 
 ## Working agreements
 

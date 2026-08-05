@@ -2,18 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, errorMessage, isCommandError } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { AiProposal, AiStatus, AiTarget } from "../../lib/types";
+import type { AiStatus, AiTarget } from "../../lib/types";
 import "./PromptBar.css";
 
 interface PromptBarProps {
-  trackIndex: number;
   trackName: string;
   selection: number[];
   /** Changes when Settings closes, so the key and model are re-read. */
   settingsRevision: number;
   /** Suppressed while a proposal is on screen — one decision at a time. */
   disabled: boolean;
-  onProposal: (proposal: AiProposal) => void;
+  /** Ask for an edit. Resolves when the request is finished, however it finished. */
+  onDescribe: (prompt: string, selection: number[], target: AiTarget) => Promise<void>;
   onOpenSettings: () => void;
 }
 
@@ -29,12 +29,11 @@ interface PromptBarProps {
  * the webview and the transaction never leaves Rust.
  */
 export function PromptBar({
-  trackIndex,
   trackName,
   selection,
   settingsRevision,
   disabled,
-  onProposal,
+  onDescribe,
   onOpenSettings,
 }: PromptBarProps) {
   const [status, setStatus] = useState<AiStatus | null>(null);
@@ -69,35 +68,35 @@ export function PromptBar({
     setBusy(true);
     setError(null);
     try {
-      const proposal = await api.aiPropose(trackIndex, text, selection, target);
-      onProposal(proposal);
-      if (proposal.empty) {
-        logger.info(proposal.narration || "The model made no changes");
-      } else {
-        logger.info(`AI proposal: ${proposal.summary}`, proposal.narration);
-      }
-      if (proposal.truncated) {
-        logger.warn("The model ran out of turns — the proposal may be incomplete");
-      }
+      // The request itself belongs to whoever owns the pending slot: it puts the
+      // thinking overlay up, and the answer has to land in the same place a
+      // transcription does.
+      await onDescribe(text, selection, target);
+      setPrompt("");
     } catch (e) {
       const message = errorMessage(e);
       setError(message);
-      if (!(isCommandError(e) && (e.code === "no_api_key" || e.code === "no_model"))) {
+      if (!(isCommandError(e) && (e.code === "no_key" || e.code === "no_model"))) {
         logger.error("The AI edit failed", message);
       }
     } finally {
       setBusy(false);
     }
-  }, [prompt, busy, disabled, trackIndex, selection, target, onProposal]);
+  }, [prompt, busy, disabled, selection, target, onDescribe]);
 
-  const needsSetup = status !== null && (!status.has_key || !status.model);
-
-  if (needsSetup) {
+  if (status !== null && !status.ready) {
     return (
       <div className="promptbar promptbar--setup">
+        {/*
+          Which provider is missing what — theirs — at one line, which is the length a
+          control bar has for prose. Where a key is kept and who makes the request is a
+          real reassurance and it is three lines; it is already said in Settings, on the
+          panel with the field you type the key into.
+        */}
         <span className="promptbar__hint">
-          Add an Anthropic API key to describe edits in words. It is stored in the Keychain
-          and every request is made by Rust — the key is never handed to the interface.
+          {status.provider === "lm_studio"
+            ? "Choose a model from your local server to describe edits in words."
+            : "Add an API key — or point the app at LM Studio — to describe edits in words."}
         </span>
         <button className="btn" onClick={onOpenSettings}>
           Set up AI

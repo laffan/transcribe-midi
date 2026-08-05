@@ -7,7 +7,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) calc(var(--space-3) + var(--safe-right)) var(--space-2)
+    calc(var(--space-3) + var(--safe-left));
   border-top: 1px solid var(--border);
   background: var(--bg-1);
   min-width: 0;
@@ -70,5 +71,60 @@
        the field collapsing to nothing. */
     flex-basis: 100%;
     order: -1;
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * Describing the edit you want is one of the two things the app is for, so the field
+ * keeps its own row on a phone and the scope picker and the button share the one under
+ * it. The alternative — a single row where the field is whatever is left after a target
+ * menu and a Send button — is a text box about eight characters wide.
+ */
+@media (max-width: 430px) {
+  .promptbar {
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-1) calc(var(--space-2) + var(--safe-right)) var(--space-2)
+      calc(var(--space-2) + var(--safe-left));
+  }
+
+  .promptbar__target {
+    /* Was capped for a row it no longer shares with the field. */
+    max-width: none;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .promptbar__scope {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .promptbar__input {
+    min-height: var(--h-control);
+  }
+
+  /* The hint is standing advice next to a field you are already using. */
+  .promptbar__hint {
+    display: none;
+  }
+}
+
+/* Lying down there is width for one row again, and no height to spend on two. */
+@media (max-height: 460px) and (pointer: coarse) {
+  .promptbar {
+    flex-wrap: nowrap;
+    padding-top: var(--space-1);
+    padding-bottom: var(--space-1);
+  }
+
+  .promptbar__input {
+    flex-basis: auto;
+    order: 0;
+  }
+
+  .promptbar__hint {
+    display: none;
   }
 }

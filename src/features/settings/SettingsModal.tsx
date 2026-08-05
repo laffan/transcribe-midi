@@ -3,7 +3,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Modal } from "../../components/Modal";
 import { api, errorMessage, isTauri } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { AiStatus, BuildInfo, InputSettings, ModelInfo } from "../../lib/types";
+import type {
+  AiProvider,
+  AiStatus,
+  BuildInfo,
+  InputSettings,
+  ModelInfo,
+} from "../../lib/types";
+
+/** Must match `LM_STUDIO_DEFAULT_URL` in `unplugged-ai`. */
+const DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1";
 import type { Theme } from "../../lib/theme";
 import { setTheme } from "../../lib/theme";
 import "./SettingsModal.css";
@@ -238,6 +247,8 @@ function AiTab() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [draftKey, setDraftKey] = useState("");
+  /** Edited freely; only sent when Connect is pressed. */
+  const [localUrl, setLocalUrl] = useState(DEFAULT_LM_STUDIO_URL);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -255,12 +266,14 @@ function AiTab() {
   useEffect(() => {
     void (async () => {
       const next = await refresh();
-      // Only reach for the network when there is a key to authenticate with; otherwise
-      // opening this tab would produce a pointless failure every time.
-      if (!next?.has_key) return;
+      if (!next) return;
+      setLocalUrl(next.local_url || DEFAULT_LM_STUDIO_URL);
+      // Only reach for the network when the provider can actually answer: for Anthropic
+      // that means a key, and for a local server it means one being up. Otherwise
+      // opening this tab produces a pointless failure every time.
+      if (next.provider === "anthropic" && !next.has_key) return;
       try {
-        const listed = await api.aiModels();
-        setModels(listed.models);
+        setModels((await api.aiModels()).models);
       } catch (e) {
         setError(errorMessage(e));
       }
@@ -299,8 +312,93 @@ function AiTab() {
     }
   }
 
+  async function chooseProvider(provider: AiProvider) {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await api.aiSetProvider(provider, localUrl);
+      setStatus(next);
+      setModels([]);
+      // A local server is asked what it has the moment it is chosen; the cloud waits for
+      // a key, which is what populates its list.
+      if (provider === "lm_studio") await loadModels();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadModels() {
+    try {
+      setModels((await api.aiModels()).models);
+      setError(null);
+    } catch (e) {
+      setModels([]);
+      setError(errorMessage(e));
+    }
+  }
+
+  const local = status?.provider === "lm_studio";
+
   return (
     <div className="settings__group">
+      <div className="field">
+        <span className="field__label">Where edits are worked out</span>
+        <div className="segmented" role="group" aria-label="AI provider">
+          <button
+            className={`segmented__option ${!local ? "segmented__option--on" : ""}`}
+            onClick={() => void chooseProvider("anthropic")}
+            aria-pressed={!local}
+            disabled={busy}
+          >
+            Anthropic
+          </button>
+          <button
+            className={`segmented__option ${local ? "segmented__option--on" : ""}`}
+            onClick={() => void chooseProvider("lm_studio")}
+            aria-pressed={local}
+            disabled={busy}
+          >
+            LM Studio
+          </button>
+        </div>
+        <span className="field__hint">
+          LM Studio runs the model on this machine: nothing leaves it, there is no key and
+          no cost. It needs a model that supports <em>tool calling</em> — this app works by
+          giving the model editing tools, and one that cannot call them will answer in
+          prose and change nothing.
+        </span>
+      </div>
+
+      {local ? (
+        <label className="field">
+          <span className="field__label">Server address</span>
+          <div className="settings__row">
+            <input
+              className="input mono"
+              spellCheck={false}
+              placeholder={DEFAULT_LM_STUDIO_URL}
+              value={localUrl}
+              disabled={busy}
+              onChange={(e) => setLocalUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void chooseProvider("lm_studio");
+                }
+              }}
+            />
+            <button className="btn" disabled={busy} onClick={() => void chooseProvider("lm_studio")}>
+              {busy ? "Checking…" : "Connect"}
+            </button>
+          </div>
+          <span className="field__hint">
+            Start the server in LM Studio (Developer → Start Server) and load a model
+            first. With or without <span className="mono">/v1</span> — both work.
+          </span>
+        </label>
+      ) : (
       <label className="field">
         <span className="field__label">Anthropic API key</span>
         {status?.has_key ? (
@@ -350,6 +448,7 @@ function AiTab() {
           </span>
         )}
       </label>
+      )}
 
       {error && <p className="settings__error">{error}</p>}
 
@@ -358,7 +457,7 @@ function AiTab() {
         <select
           className="input"
           value={status?.model ?? ""}
-          disabled={!status?.has_key || models.length === 0}
+          disabled={models.length === 0}
           onChange={(e) => {
             const id = e.target.value;
             api
@@ -375,9 +474,9 @@ function AiTab() {
           ))}
         </select>
         <span className="field__hint">
-          Fetched from <span className="mono">GET /v1/models</span> when the key is saved, rather
-          than hardcoded — a baked-in list is wrong the week a model ships. The default is the
-          newest Sonnet-class model the key can reach.
+          {local
+            ? "Whatever the server reports as loaded. Load a different model there and press Connect again."
+            : "Fetched from GET /v1/models when the key is saved, rather than hardcoded — a baked-in list is wrong the week a model ships. The default is the newest Sonnet-class model the key can reach."}
         </span>
       </label>
     </div>

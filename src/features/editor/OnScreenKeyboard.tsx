@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PHONE, useMediaQuery } from "../../lib/useMediaQuery";
 import { isBlackKey, pitchName } from "./pianoRollGeometry";
 import "./OnScreenKeyboard.css";
 
@@ -32,6 +33,19 @@ const OCTAVE_UP = "x";
 /** Two octaves visible, per the spec. */
 const VISIBLE_SEMITONES = 24;
 
+/**
+ * One octave on a phone.
+ *
+ * This is the one place the keyboard cannot be fixed by styling it. Two octaves is
+ * fifteen white keys; across the ~330pt a phone has left after the octave controls that
+ * is 22pt per key, and the black keys sitting on top of them are 14pt wide — a third of
+ * what a fingertip can aim at, so every press is a coin toss between two semitones. One
+ * octave puts a white key at ~40pt, which is the width the notes have to be for the
+ * keyboard to be an instrument rather than a picture of one. The octave buttons beside
+ * it are how you reach the rest, and they matter much more here than on a desktop.
+ */
+const COMPACT_SEMITONES = 12;
+
 interface OnScreenKeyboardProps {
   /** Display only. Rust applies the velocity — this just shows what it will be. */
   velocity: number;
@@ -40,6 +54,15 @@ interface OnScreenKeyboardProps {
   onNoteOff: (pitch: number) => void;
   /** Pitches held by live input, shown alongside local presses. */
   externalNotes?: Set<number>;
+  /**
+   * Whether the computer keyboard is playing these keys.
+   *
+   * Off, the mouse still works and every letter belongs to the editor's shortcuts. There
+   * is no in-between: `J` cannot be Join and B at the same time, and `L` cannot be
+   * Listen and D.
+   */
+  typing: boolean;
+  onTypingChange: (typing: boolean) => void;
 }
 
 export function OnScreenKeyboard({
@@ -48,7 +71,15 @@ export function OnScreenKeyboard({
   onNoteOn,
   onNoteOff,
   externalNotes,
+  typing,
+  onTypingChange,
 }: OnScreenKeyboardProps) {
+  // A phone standing up has no room for two octaves of playable keys; lying down it has
+  // the width but only ~60pt of height, and a one-octave board keeps the keys square
+  // enough to aim at rather than turning them into slivers.
+  const compact = useMediaQuery(PHONE);
+  const visibleSemitones = compact ? COMPACT_SEMITONES : VISIBLE_SEMITONES;
+
   // MIDI 48 = C3, so the default two octaves span C3–C5 around middle C.
   const [baseOctave, setBaseOctave] = useState(4);
   const [held, setHeld] = useState<Set<number>>(new Set());
@@ -87,6 +118,10 @@ export function OnScreenKeyboard({
   // -- computer keyboard ---------------------------------------------------
 
   useEffect(() => {
+    // Nothing is bound at all unless the mode is on. Guarding inside the handler would
+    // still swallow auto-repeat and preventDefault from keys the editor wanted.
+    if (!typing) return;
+
     function isTypingTarget(target: EventTarget | null): boolean {
       const element = target as HTMLElement | null;
       return !!element && (
@@ -149,14 +184,21 @@ export function OnScreenKeyboard({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, [basePitch, press, release]);
+  }, [typing, basePitch, press, release]);
+
+  // Leaving the mode with keys down would strand them, since the keyup handler goes with
+  // the mode that was holding them.
+  useEffect(() => {
+    if (typing) return;
+    heldRef.current.forEach((pitch) => release(pitch));
+  }, [typing, release]);
 
   // -- layout --------------------------------------------------------------
 
   /** A key is lit if it is held locally or by an external controller. */
   const isHeld = (pitch: number) => held.has(pitch) || externalNotes?.has(pitch) === true;
 
-  const pitches = Array.from({ length: VISIBLE_SEMITONES + 1 }, (_, i) => basePitch + i);
+  const pitches = Array.from({ length: visibleSemitones + 1 }, (_, i) => basePitch + i);
   const whites = pitches.filter((p) => !isBlackKey(p));
 
   // Black keys are positioned as a fraction of the white-key run so the two octaves
@@ -164,13 +206,26 @@ export function OnScreenKeyboard({
   const whiteIndexOf = (pitch: number) => whites.findIndex((w) => w > pitch);
 
   return (
-    <div className="keys">
+    <div className={`keys ${typing ? "keys--typing" : ""}`}>
       <div className="keys__controls">
+        <button
+          className={`btn keys__typing ${typing ? "btn--primary" : "btn--ghost"}`}
+          onClick={() => onTypingChange(!typing)}
+          aria-pressed={typing}
+          title={
+            typing
+              ? "Typing plays these keys — editor shortcuts are paused. Esc to leave."
+              : "Play these keys from the computer keyboard. Editor shortcuts pause while it is on."
+          }
+        >
+          {typing ? "Typing ⏎" : "Typing"}
+        </button>
+
         <button
           className="btn btn--ghost btn--icon"
           onClick={() => setBaseOctave((o) => Math.max(0, o - 1))}
           aria-label="Octave down"
-          title="Octave down (Z)"
+          title={typing ? "Octave down (Z)" : "Octave down"}
         >
           −
         </button>
@@ -179,7 +234,7 @@ export function OnScreenKeyboard({
           className="btn btn--ghost btn--icon"
           onClick={() => setBaseOctave((o) => Math.min(9, o + 1))}
           aria-label="Octave up"
-          title="Octave up (X)"
+          title={typing ? "Octave up (X)" : "Octave up"}
         >
           +
         </button>
@@ -234,6 +289,7 @@ export function OnScreenKeyboard({
       </div>
 
       <div className="keys__meta muted">
+        {typing && <span className="keys__mode">A–L · W/E/T/Y/U · Z/X · Esc</span>}
         <span className="mono">vel {velocity}</span>
         <span className="mono">ch {channel + 1}</span>
       </div>

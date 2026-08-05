@@ -1588,3 +1588,1244 @@ Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of 
 - [ ] Save the Logic project, reopen it, confirm the same Unplugged project is selected.
 - [ ] Delete that project in the app, reopen the Logic session, confirm it loads with
       nothing selected rather than failing.
+
+---
+
+## The toolbar, and Listen as a place rather than a strip
+
+Two changes that look like layout and are not. The first says where a control belongs;
+the second says what the transcription feature *is*.
+
+### Controls were sorted by when they were built, not by what they are
+
+The bottom bar had become the place a control went when it needed a home: play beside
+record beside listen beside loop beside the clock beside undo beside save. Two different
+kinds of thing were in one row — "hear this project" is about the whole document, "record
+a take" is about making something new — and the row could only grow.
+
+The split is now by scope, and it is a rule rather than a tidy-up:
+
+- **The toolbar is what concerns the project.** What is on screen (keyboard, history),
+  what the transport is doing, what is open (settings, console, import).
+- **The bar under the roll is what makes and unmakes notes.** Record and Listen — the two
+  ways a performance becomes notes — then loop and click, then undo/redo/save/panic.
+
+Play, pause, stop, the clock and the tempo moved up. Nothing is in both places; a control
+in two bars is two states to keep in step and one of them will be wrong.
+
+**Pause and stop are now different buttons, and neither is new behaviour.** Rust's
+`transport_stop` has always stopped where it was — that is a pause — and the only way to
+get back to the top was to press the return-to-zero button beside it. Logic, Live and
+every hardware transport since tape distinguish the two; the app was quietly offering one
+of them under the other's name. Stop is `transport_stop` followed by `transport_seek(0)`,
+which is exactly what the two old buttons did in sequence.
+
+**The clock shows a bar or a note.** Bars|beats|ticks is what a DAW's LCD says, and it is
+right for placing an edit. But this app's input is a sung line, and the question asked of
+a playhead here is at least as often "what note is that?" — which the roll answers only if
+you can find the playhead on it. Clicking the readout switches. It is one panel rather
+than three controls near each other for the same reason Logic's LCD is one panel: position
+and tempo are read together.
+
+**Keys and History hide by removing their grid track, not by `display: none`.** A hidden
+panel that still holds its space is not hidden, and this layout is explicit rows and
+columns — an explicit grid row exists whether or not anything is in it, so the row goes
+too (`.editor--no-keyboard`, `.editor--no-history`).
+
+**Import moved to the toolbar, out of the inspector's Import/Export group.** Bringing
+material in is a top-level act like opening a project; exporting is something you do to a
+track you are looking at. The preview-then-import sequence — which is what makes a PPQ
+rescale an announcement rather than a surprise — is now in `importSmf.ts` so there is one
+of it.
+
+### Listening happened in the smallest space on screen
+
+The flow was: press Listen, get a strip along the bottom of the window, perform, press
+stop, *then* get a full-window editor. The least reversible part of the whole feature —
+the performance, which cannot be re-run without doing it again — had the least room, and
+the part you can redo endlessly had the most.
+
+It is one continuous activity: you play something, you look at what came back, you fix it
+or you do it again. So it is one surface for the duration and the stage inside it changes.
+`ListenOverlay` is the frame; `ListenCapture` and `TranscribeEditor` are the two stages.
+
+`pending` deliberately outlives the overlay. Closing it puts the take back in the review
+bar rather than throwing it away, so "let me look at the roll first" is not a decision to
+discard.
+
+### You could hear the recording but not the result
+
+Phase 9 added take playback and its own comment argued for it: hearing the sampler play
+the transcription tells you what the *transcriber* heard, hearing the take tells you what
+you played. Both halves are true and the conclusion drawn from them was half right. The
+notes are the thing being decided about. Offering only the recording meant the one way to
+hear the actual result was to accept it and find out — which is the wrong order for a
+feature whose entire premise is "look before it lands".
+
+So both play, MIDI is the default, and `Both` exists because the comparison is the point.
+
+**Why a scheduler thread and not the sequencer.** The sequencer is driven by the audio
+thread and owns one timeline — the project's. Auditioning a proposal through it would mean
+swapping that timeline out and putting it back, with the transport's position and the
+playhead events going somewhere strange in between, to play four bars. Instead
+`unplugged_core::audition` places the note boundaries in seconds (pure, tested) and
+`src-tauri/src/audition.rs` walks them against a wall clock, sounding them on the sampler
+by the same path as the on-screen keyboard.
+
+That trades sample accuracy for independence. It is the right trade here and nowhere else:
+nothing in this path is on the audio thread, and a couple of milliseconds of jitter is
+inaudible in a phrase you are listening to in order to decide whether a note is wrong. It
+would not be an acceptable trade for playback of the project, which is why this is a
+separate module rather than a second way to play.
+
+Details worth knowing:
+
+- **Cancellation is a counter, not a flag.** `stop` immediately followed by `play` must not
+  let the outgoing thread's next boundary land inside the incoming run. The thread checks
+  its generation every 2 ms, which is also how long a stop takes to silence a held note.
+- **The thread releases what it sounded.** Not `all_notes_off`, which would also kill live
+  keyboard notes.
+- **The recording's clock wins when it is playing.** `capture_audition_position` prefers
+  the preview player's position and falls back to the scheduler's, because the sample clock
+  is the one the ear is following when both are running.
+- **A partially available source is not an error.** Off-Apple the preview player refuses and
+  the sampler is silent; asking for `Both` there still succeeds if the notes were scheduled,
+  because the transcription is perfectly reviewable on a machine that cannot play it.
+- **The tempo is not recomputed.** Rust derives ticks-per-second from
+  `capture.analysis.tempo_bpm` — the tempo the notes were actually placed with — which is
+  the same number the editor draws them against. A second derivation would drift.
+
+`capture_preview_play/stop/position` are gone; `capture_audition_play/stop/position`
+replace them, with a `source` of `midi` | `take` | `both`.
+
+### What was verified
+
+- **315 Rust tests** (up from 302), clippy clean, `npm run build` clean, both Apple targets
+  compile-check.
+- New tests cover the audition schedule — a note straddling the start point keeps its
+  remainder, a release sorts before a retrigger at the same instant, a nonsense tempo
+  schedules nothing — and the run bookkeeping: a stop makes the running generation stale,
+  a late-finishing run does not clear a later one's clock, a run past its end reports no
+  position.
+- The toolbar, its toggles and both overlay stages were driven in the browser preview at
+  1440 and 880 px, with the console watched for errors. The mock was faked *temporarily*
+  to render the overlay and reverted — `mockBackend.ts` still refuses transcription on
+  purpose, and should stay that way.
+
+### Not verified — needs a Mac and a microphone
+
+1. **Whether the MIDI audition makes a sound at all.** The scheduler reaches the sampler
+   through `AudioEngine::note_on`, the same call the on-screen keyboard makes, so if keys
+   sound this should. But it has only ever run against the null backend.
+2. **Whether the timing is good enough.** Wall-clock scheduling with a 2 ms poll should
+   place a note within a few milliseconds. If it audibly stutters under load, the fix is
+   not a smaller poll — it is to render the pending notes through the preview player as
+   audio, which is a bigger change.
+3. **`Both`, together.** The two players are started one after the other from the same
+   command, so they may be a few milliseconds apart. Whether that reads as "in sync" or as
+   flam is a question for ears.
+4. **Whether stopping ever leaves a note hanging.** The thread releases what it holds
+   within 2 ms of a cancellation; Panic is still there if it does not.
+5. **The transport glyphs.** `⏸` and `⏹` do not render in the Linux preview's fonts. `⏹`
+   and `⏮` were already in use and presumably rendered on macOS, so `⏸` should too — if it
+   comes out as a box, that is a font fallback, not a bug.
+
+### What a human should test manually
+
+- [ ] Play, pause, play again — the playhead resumes where it stopped. Stop returns to the
+      top.
+- [ ] `Space` still plays and pauses; it does nothing while the listen overlay is up.
+- [ ] Click the clock readout: it swaps between `1.1.000` and the note under the playhead.
+      Play through a phrase and confirm the note name follows.
+- [ ] Nudge the tempo with − and +, and type into the field. Confirm playback follows.
+- [ ] Toggle Keys and History off: nothing is left holding empty space, and the roll grows
+      into it.
+- [ ] Import from the toolbar. Confirm a rescale warning still appears for a file at a
+      different PPQ.
+- [ ] Press Listen: the overlay opens *immediately* and the waveform grows as you sing.
+- [ ] Stop & transcribe: the same window becomes the review stage without a flash of the
+      editor behind it.
+- [ ] Press Play there with **Notes** selected — the sampler plays the transcription.
+- [ ] Switch to **Recording** while it is playing: it continues from the same place with
+      the take instead.
+- [ ] Switch to **Both** and judge whether they line up.
+- [ ] Click partway along the waveform: playback starts from there, in the selected source.
+- [ ] Drag a note while it is playing; confirm nothing hangs.
+- [ ] Close the overlay with ✕ — the take is still offered in the review bar, and
+      "Fine-tune…" brings the overlay back with the same notes.
+- [ ] Add to track, then undo. One step.
+- [ ] Transcribe an audio *file* from the inspector — it should open the same overlay at
+      the review stage.
+
+---
+
+## Six corrections to the listen flow
+
+All six came from using it. They divide into one thing that was hidden, three things the
+fine-tune stage could not do, and two keys that meant two things at once.
+
+### The wait was invisible, so it looked like a failure
+
+Pressing "Stop & transcribe" closed the overlay, left the editor on screen for several
+seconds, and then reopened the overlay with a result. Every part of that is wrong: the
+window that came back was not what you were doing, the gap read as a dropped take, and
+nothing said the machine was busy.
+
+The overlay now has a third stage between capture and review, and it does not close in
+between. The bar in it is **real** — `transcribe_reporting` takes a callback and the
+analysis publishes a fraction as it goes:
+
+- **The split is by cost, not by pipeline stage.** YIN over every frame is 65% of the
+  work and spectral flux is most of the rest, so those two get the bar between them; the
+  tempo estimate and the assembly are a pass each over one value per frame and finish
+  before the eye can see them. A bar apportioned by stage would sit at 40% for four
+  seconds.
+- **It reports every sixteenth frame, not every frame.** The callback crosses into an
+  atomic store; the caller may one day do more.
+- **A take too short to analyse still completes the bar**, or the overlay would sit at
+  zero forever on a take of nothing. There is a test for exactly that.
+- The progress lives in an `AtomicU32` in `AppState` rather than behind the capture lock,
+  because the analysis holds nothing while it runs and a progress read must not wait on
+  it.
+
+`transcribe` is now a wrapper over `transcribe_reporting` with an empty callback, and a
+test asserts the two produce identical transcriptions — a reporting path that changed the
+answer would be worse than no bar at all.
+
+### Two notes could sound at once, which the source could not have done
+
+A transcription is monophonic by construction: the segmenter walks one frame track, so
+its notes cannot overlap. Two things broke that afterwards. **Quantisation** rounds a
+start backwards and a length up to a whole grid step, and two sixteenths played slightly
+ahead of the beat land on top of each other. **Dragging** in the fine-tune stage can put a
+note anywhere at all.
+
+Either way the result is a lie about what was performed. `unplugged_core::monophony` is
+the rule, in one place:
+
+- A note running into the next attack is **cut there** — the later attack wins, which is
+  what a monophonic instrument does.
+- Two notes at the same instant leave **the longer one**. A short note on the same attack
+  is far more often an artefact than a real event, and the sort's tie-break is what
+  encodes that.
+- A note left with nothing is **dropped**, not kept at zero length, which is
+  unrepresentable in SMF anyway.
+
+It is applied after quantisation in the transcriber and in `capture_set_notes`, which is
+why that command now returns **the notes it kept** rather than a count: the editor must
+draw what Rust decided, or the next drag is computed against notes that no longer exist.
+The transcriber needs the same decision over `DetectedNote`, which carries the analysis
+behind each note, so the rule is also exposed as `flatten_indexed` — kept index and new
+duration — and a test asserts the two forms agree.
+
+### The dials were constants, and every one of them was a guess
+
+`MIN_CONFIDENCE`, `SILENCE_FLOOR`, `MIN_NOTE_FRAMES`, `PITCH_BREAK_SEMITONES` and the
+onset thresholds are all judgements about the source: how percussive it is, how steady the
+singer's pitch is, how much room is in the recording. The defaults suit a hummed line at a
+laptop. A plucked string or a breathy voice wants something else, and getting it wrong
+produces a *plausible* result rather than an obviously broken one — which is the case
+worth exposing rather than tuning once and hiding.
+
+`TranscribeTuning` carries the five, named for the symptom rather than the stage: nobody
+looking at a bad transcription thinks "the spectral flux threshold is too high", they
+think "it heard one note where I played two".
+
+- **One dial moves all three onset thresholds together**, multiplicatively:
+  `scale = 2^(1 - 2s)`. Monotone, nothing can cross zero, and `s = 0.5` reproduces
+  `OnsetParams::default()` *exactly* — tested, because a default that missed would
+  silently change what every take transcribes to.
+- **Rust clamps everything**, including NaN, which `f32::clamp` panics on. These arrive
+  from the webview; a minimum note of zero is not a crash, it is ten thousand notes, which
+  looks like a broken transcriber rather than a bad setting.
+- The tuning **comes back inside the preview**, so the controls open showing what actually
+  produced what is on screen, and it is carried to the next take — a setting you had to
+  find once should not need finding again.
+- Moving one **re-reads the take already in memory**. That is what retaining the audio was
+  for. Changes are sent on release rather than per pixel of a drag, because each one is
+  seconds of work.
+
+### Three things the fine-tune stage could not do
+
+**You could not hear what you were dragging.** Correcting a transcription is an ear job
+and the note under the cursor is the one being judged. It now sounds when grabbed, and
+again on each semitone crossed — on each semitone, not each pointer frame, or a drag is a
+siren.
+
+**Delete needed the mouse.** `⌫` and `Delete` now remove the selected note.
+
+**Join.** A held note the analysis broke in two — at a vibrato wobble, or a slur it read as
+an attack — is the single most common thing wrong with a result, and there was no way to
+put it back together. `J` is now bound in both places, with the semantics each one can
+support:
+
+- In the **piano roll**, where there is a marquee, it merges the whole selection into one
+  note spanning the first attack to the last release.
+- In the **fine-tune stage**, which selects one note at a time, it merges the selected
+  note into the one after it. Repeating the key walks along a note that came back in four
+  pieces. Adding a marquee there to make the two identical would be a bigger change than
+  the problem needs.
+
+Either way the **pitch of the earliest note wins**: the note you meant is the one that
+started, and the rest are fragments. The command is `Delete` + `Insert` in one
+transaction rather than a `Replace` plus a `Delete`, because a transaction's commands
+apply in order and indices in a later one would refer to a list the earlier one has
+already re-sorted. One undo step, tested.
+
+`J` is unmodified rather than `⌘J`, which is the window manager's on macOS — and because
+Join is an editing verb like Record and Listen, which are also bare letters here.
+
+### Two keys meant two things, and the loser depended on where focus was
+
+`L` was Listen and also D on the on-screen keyboard. `J` would have been Join and also B.
+`S` is a white key. Three separate `window` keydown listeners each guarded this ad hoc,
+and which one won was a question about focus rather than about intent.
+
+Typing on the piano is now **a mode**. While it is on, the letter keys play notes and
+every editor shortcut is suspended; while it is off, nothing is bound to the keyboard at
+all and the keys still work with the mouse. There is no in-between, because any clever
+arrangement would mean one of the two silently losing.
+
+- The listener is **not bound** unless the mode is on. Guarding inside the handler would
+  still swallow auto-repeat and `preventDefault` from keys the editor wanted.
+- **`Esc` leaves**, and is read before the mode's own suspension — otherwise the only way
+  back would be the mouse.
+- **Leaving releases whatever is held**, since the keyup handler goes with the mode that
+  was holding it.
+- The panel is **outlined while it is on**. "Why did Space stop playing?" needs an answer
+  on screen, not in a release note.
+- The mode holds but does not listen while the listen overlay is up, since the overlay
+  covers the keys.
+- `PianoRoll` takes a `shortcutsSuspended` prop rather than reaching for a module-level
+  flag. The editor owns the state and both modes feed it; a side channel here would be
+  the same mistake as a side channel to the backend.
+
+### What was verified
+
+- **341 Rust tests** (up from 315), clippy clean, `npm run build` clean, both Apple
+  targets compile-check.
+- New tests: the monophonic rule in seven cases including a quantisation pile-up; progress
+  monotone from zero to one, and one for a take too short to analyse; the default tuning
+  landing exactly on the onset parameters it replaced; each dial moving the result in the
+  direction it claims; nonsense dials clamped; join spanning, closing gaps, undoing as one
+  step, and surviving indices from a stale selection.
+- The confidence dial's test is against a signal with noise added by a small
+  deterministic LCG, because a synthetic sine satisfies any threshold and would have
+  proved nothing.
+- In the browser preview: typing mode on and off via `Esc`, the progress stage reporting a
+  real fraction with the overlay staying put, the five dials, and select → `J` → `⌫` in
+  the fine-tune stage. The mock was faked temporarily and reverted; `mockBackend.ts` still
+  refuses transcription on purpose.
+
+### Not verified — needs a Mac and a microphone
+
+1. **Whether the progress bar is smooth on a real take.** It has only run against a mock
+   that advances on a timer. The shape to watch for is a stall around 65%, which would
+   mean the flux stage costs more than the third of the bar it has been given.
+2. **Whether dragging by ear is pleasant.** The blip is the same 180 ms audition the piano
+   roll uses. On a fast drag across an octave that is twelve of them.
+3. **Whether the defaults are right.** Now that the dials exist, the interesting question
+   is which one a real bad result needs — that is a question for takes, not for tests.
+4. **Whether joining forwards is the right default in the fine-tune stage.** It is the
+   direction that fits "the analysis split this", but the first time it eats a note you
+   wanted, it is wrong.
+
+### What a human should test manually
+
+- [ ] Record a long take. The overlay stays up, the bar moves, and the review stage
+      arrives without the editor ever showing through.
+- [ ] Cancel during the wait — nothing is left running and no take is committed.
+- [ ] Drag a note up and down and confirm it sounds at each semitone, not continuously.
+- [ ] Drag one note on top of another. The result is still one note at a time, and the
+      picture matches what plays.
+- [ ] Select a note, `⌫`. Then select another and press `J` — it should swallow the one
+      after it.
+- [ ] Quantise a fast run to 1/16 and confirm nothing overlaps.
+- [ ] Open Analysis and pull "Split repeated notes" to each end. More notes one way,
+      fewer the other, and the take is never re-recorded.
+- [ ] Reset, and confirm the result matches what you first got.
+- [ ] In the roll: select several notes, press `J`, confirm one note from first attack to
+      last release, and that one undo puts them all back.
+- [ ] Turn Typing on. `L` plays a note instead of opening Listen; `Space` does nothing;
+      the panel is outlined. `Esc` gives everything back.
+- [ ] Hold a key, click Typing off with the mouse, and confirm the note stops.
+
+### Two files came off the debt register on the way past
+
+The 700-line rule says to split a file on the register when you touch it substantially,
+and two of these changes did:
+
+- **`command.rs`** (837 → 984 with the join command) is now a directory along the seam it
+  already had: `command/mod.rs` holds the session and its history, `command/edits.rs` the
+  gestures that were an inline `pub mod edits`, `command/tests.rs` the tests.
+- **`unplugged-transcribe/src/lib.rs`** (769 → 1089 with the tuning and the progress
+  callback) keeps the pipeline and sheds its tests to a sibling `tests.rs`.
+
+`PianoRoll.tsx` grew by seven lines — the `shortcutsSuspended` prop and its guard — and is
+still on the register at ~755. That is not a substantial touch and it was not split;
+saying so here is the alternative to pretending it did not happen.
+
+---
+
+## The Keychain prompt on every launch
+
+**Reported:** "unplugged wants to use your confidential information stored in
+'com.unplugged.daw' in your keychain" on every open. It was a real bug, and it violated
+this project's own stated rule.
+
+### What was happening
+
+`PromptBar` asks `ai_status()` when it mounts, which is every time a project opens — it
+needs to know whether to show "Set up AI". `ai_status` called `has_api_key()` and
+`key_hint()`, and *both* of those called `api_key()`, which is a full
+`SecItemCopyMatching` with `kSecReturnData`.
+
+So the app decrypted the user's Anthropic API key twice at launch, to render a boolean and
+four characters, before being asked to do anything. macOS consults an item's access
+control list when the **secret** is released, so that read is exactly what raises the
+dialog — and because the dialog says "macOS" rather than "this line of code", it read as
+an OS quirk rather than as the app doing something it should not.
+
+README-TECHNICAL has said since Phase 6 that the key "is read only inside `unplugged-ai`,
+immediately before a request". `ai_status` is not immediately before a request. The rule
+was right; the code had drifted from it, and nothing failed when it did.
+
+### The fix
+
+**Status is answered from the item's attributes, which never releases the secret.**
+
+- `unplugged_platform_keychain_has` — `SecItemCopyMatching` with `kSecReturnAttributes`
+  and no `kSecReturnData`. Existence, silently.
+- `unplugged_platform_keychain_hint` — the last four characters, read from
+  `kSecAttrComment`, where `set` now writes them.
+
+Storing the hint as an attribute is the part worth arguing about, and it holds: those four
+characters were *already* designed to cross into the webview. Keeping them where they can
+be read without decrypting anything is strictly less exposure than decrypting the whole key
+to derive them, which is what happened before. A key stored by an older build has no
+comment, so its hint comes back `None` and the panel shows "stored" — which it already did
+for that case.
+
+`unplugged_platform_keychain_get` is now the only thing in the app that can prompt, and it
+is reached from exactly two places, both immediately before an HTTPS request:
+`propose_edit` and `available_models`.
+
+**There is a test, because nothing fails if this drifts back.** It reads `Keychain.swift`,
+strips the comments, and asserts `kSecReturnData` appears exactly once and inside the
+getter. Same shape as `the_three_places_that_name_the_shared_path_agree`, and for the same
+reason: the compiler cannot connect these two files, and the symptom of them disagreeing is
+a system dialog nobody traces back to a commit.
+
+### What this does not fix, and should not
+
+Opening **Settings** with a key set still reads it, because it lists the available models —
+that is a real request, and a prompt there is the Keychain working. Pressing **⌘K** and
+describing an edit will prompt the first time too.
+
+What *will* still prompt more than once is a rebuild. A Keychain ACL trusts a specific code
+signature, and an ad-hoc-signed build gets a new one every time it is built, so "Always
+Allow" only holds until the next `install-plugin.sh`. That is a consequence of the
+no-paid-team decision recorded in Phase 10, not of this code, and it goes away with a
+stable signing identity.
+
+### Not verified — needs a Mac
+
+None of the Swift compiles here. In rough order of risk:
+
+1. **Whether an attributes-only query really is silent.** This is the mechanism the whole
+   fix rests on, and it is remembered rather than measured: macOS gates the ACL on
+   releasing `kSecValueData`, so a `kSecReturnAttributes` query should not prompt. If the
+   dialog still appears at launch, that premise is wrong and the hint has to move to
+   `ai.json` instead, leaving `has` as the only Keychain call.
+2. **`unplugged_platform_keychain_set` gained a third parameter.** Both sides of the ABI
+   are updated in this commit, but a mismatch here is a link error at best.
+3. **`kSecAttrComment` on a generic password.** Believed available on both platforms. If
+   `SecItemAdd` starts returning `errSecParam` (-50) after this, that attribute is the
+   first thing to drop.
+4. Whether an existing key survives. It should — nothing touches the stored item until the
+   next `set` — but its hint will read "stored" until the key is entered again.
+
+### What a human should test manually
+
+- [ ] Open the app with a key already stored. **No Keychain dialog.**
+- [ ] Confirm the prompt bar still knows a key is set (no "Set up AI" button).
+- [ ] Open Settings. A dialog here is expected and correct; choose Always Allow.
+- [ ] The key row shows "stored" rather than the last four — that is the old item having no
+      comment. Re-enter the key and confirm it becomes "…abcd".
+- [ ] Quit, reopen: still no dialog at launch, and the hint persists.
+- [ ] Clear the key in Settings, confirm the prompt bar offers "Set up AI" again.
+- [ ] In Keychain Access, confirm the item is now labelled "Unplugged — Anthropic API key"
+      rather than only by its service.
+
+---
+
+## One bar, not two
+
+The last change split the controls by scope: the toolbar took what concerns the project,
+the bar under the roll kept what makes notes. That was a better rule than the one before
+it and still the wrong shape, because the split it produced was invisible. Someone hunting
+for Loop does not know it arrived with the transport rather than with the toolbar, and
+"which row is this in?" is a question about the project's history rather than about the
+work.
+
+So all of it is in the toolbar, arranged by what it does:
+
+- **Left** — what is on screen (Keys, History) and the history you can walk back through
+  (undo/redo, as icons: they are pressed by muscle memory and never read).
+- **Centre** — the transport, both ways of making notes (Record, Listen), Loop and Click,
+  and the clock they all run against.
+- **Right** — what is open (Import, Console, Settings) and what becomes of the result
+  (Panic, Save).
+
+`Transport.tsx` is gone rather than reduced to a wrapper. What is left below the roll is
+the prompt bar and the keys — the two surfaces you *type* into, which is a different kind
+of thing from a button, and the reason those two did not follow the rest up. The roll
+gained the ~56px the transport row was holding.
+
+### The bar has to give way in a defined order
+
+Everything in one row is a lot of row. Rather than let whatever happens to be last get
+clipped, the order is set and it drops what is repeated or inferable elsewhere first:
+
+| Below | Goes | Because |
+|---|---|---|
+| 1500px | the project name | it is also in the picker, and this bar is for controls |
+| 1460px | the build stamp | "is this my fix?" is not a small-window question — and a 1440 window, the common one, should have slack rather than fit exactly |
+| 1180px | the time signature | the clock keeps bar·beat and tempo, which is what is read while playing |
+| 1040px | *nothing* | the bar becomes two rows: transport centred above, the rest split beneath |
+
+Two rows rather than a scrolling bar because a control you have to scroll to is a control
+you will not find. The editor's toolbar row is `auto`, so the layout below simply starts
+lower; `--h-transport` is gone from the tokens, since nothing has a fixed height here any
+more.
+
+### What was verified
+
+- Measured at 1600, 1440, 1200 and 1000 px in the browser preview: nothing clipped
+  (`scrollWidth === clientWidth` at every width), and Listen, Loop, Click, Panic, Undo,
+  Redo, Import and Console all present and visible at each. The 1000px case wraps to two
+  rows at 89px tall.
+- Hiding the keys leaves no empty row behind — the bottom bar collapses to the prompt bar
+  and ends flush with the window.
+- 343 Rust tests, clippy clean, `npm run build` clean, both Apple targets compile-check.
+
+### What a human should test manually
+
+- [ ] Record, Listen, Loop and Click all work from the toolbar exactly as they did below.
+- [ ] Undo/redo icons: hover shows what will be undone, and they grey out with nothing to
+      undo.
+- [ ] Save still lights up when the project is dirty, and Panic still silences a stuck
+      note.
+- [ ] Resize the window down past 1040px and confirm the bar splits into two rows rather
+      than losing a control.
+
+---
+
+## Five corrections, and a second place to ask
+
+### The dials re-processed on every touch
+
+Each dial release re-read the whole take. Moving three of them on the way to a setting
+meant three passes of the analysis, each one seconds long, each one replacing the picture
+you were using to judge the last. The dials now move a **draft**, and a button appears
+over the editor when the draft has left what produced what is on screen.
+
+Over the editor rather than beside the dials, and only when there is something to do: its
+presence *is* the message that a change is pending, and what it would replace is the thing
+you are looking at while you decide.
+
+**Every re-derivation now shows the progress stage**, not just the first one. It is the
+same pipeline over the same samples and takes the same seconds; leaving the old result
+frozen on screen with no sign of work was the same lie the closed overlay used to tell.
+That meant lifting the re-read out of `TranscribeEditor` into the hook, because the
+component cannot swap itself for the progress view.
+
+Snap-to and the project-tempo checkbox stay immediate. They are a single decision each
+rather than a knob you converge on, and putting them behind the same button would be
+ceremony.
+
+### A described edit could be looked at and nothing else
+
+The asymmetry was stark: a sung line got a full window with playback and drag editing, and
+notes written *by a model* — the ones you have least reason to trust — got a diff on the
+roll, Apply, and Discard. "Nearly right" meant throwing the whole thing away and prompting
+again.
+
+`ProposalEditor` is the transcription editor's interaction with the waveform taken away:
+drag to move, edges to resize, `⌫` to remove, space to play, click the background to play
+from there. Dragging sounds the pitch, as it does in the other editor.
+
+- **The geometry is shared, the drawing is not.** `Scale` gained a `laneTop` — the note
+  lane starts under the waveform there and at the top here — and `proposalDraw` is a
+  sibling of `transcribeDraw` rather than a flag inside it. The two have nothing in common
+  below the note rectangles: no waveform, no pitch line, no onsets, and one function
+  drawing both would be mostly branches.
+- **What is already on the track is drawn underneath, dimmed.** "Added a third above"
+  should be visible rather than inferred.
+- **Adjustments go to Rust**, which validates them and re-derives its own diff — the one
+  that came with the proposal describes the model's work, and after a drag that is no
+  longer what is on offer.
+- **An adjusted proposal applies as a replacement.** The model's transaction is a minimal
+  diff against notes the user has since moved; `Delete` the base and `Insert` what is on
+  offer is coarser, correct, and still one undo step. Unedited proposals keep the original
+  transaction, so nothing about the existing path changes.
+- `NoteDiff` moved out of `ai.rs` into `core::diff` on the way, with a `between(before,
+  after)` that the hand-edit path needed. Nothing about a note diff is the model's, and
+  the move shrinks the worst file on the debt register instead of growing it.
+
+Notes are matched on **pitch and start tick**. A note in the same place at the same pitch
+is the same note however its length changed; a note dragged elsewhere reads as one
+arriving and one leaving, because nothing in a note list could say otherwise — they are
+re-sorted on every edit and have no stable id.
+
+### Nothing stopped you editing under a request
+
+A proposal is a transaction against the notes as they were when it was asked for. Edit
+underneath it and the answer arrives stale, which Rust correctly refuses — so the wait was
+for nothing, and nothing had said not to. The thinking stage covers the editor for the
+duration, which turns an unstated rule into an obvious one.
+
+Its bar is **indeterminate on purpose**: a tool loop takes as many turns as it takes, and a
+bar that guessed would be a bar that lied. "Stop waiting" sets a flag rather than
+cancelling the request — the HTTP call cannot be taken back — and rejects the proposal if
+it arrives, so Rust is not left holding a transaction nobody is going to decide about.
+
+### A second place to ask
+
+The loop built Anthropic JSON directly, which was right with one provider and wrong with
+two. It now speaks in `Turn`s and a provider serialises them:
+
+| | Anthropic | OpenAI-compatible |
+|---|---|---|
+| System prompt | top-level field | a message with `role: "system"` |
+| Tools | `{name, description, input_schema}` | `{type: "function", function: {…, parameters}}` |
+| Tool arguments | an object | **a JSON string** |
+| Tool results | blocks inside a user message | one message each, `role: "tool"` |
+
+The one thing deliberately *not* normalised is the assistant's own reply. It goes back as
+an opaque echo, because Anthropic's thinking blocks carry signatures that any
+reconstruction would invalidate — and because some local servers are strict about the
+`tool_calls` they see echoed. The loop carries it and never looks inside.
+
+Judgement calls worth recording:
+
+- **It is called LM Studio, not "local".** What it can do depends on the server: a model
+  without tool calling will answer in prose and change nothing, and naming the feature
+  after the thing it was built against sets a truer expectation than "local models" would.
+- **No placeholder key.** A local server does not want one, and sending `sk-none` to
+  something that *does* check would be worse than sending nothing.
+- **Unparseable tool arguments do not end the conversation.** Local models emit malformed
+  JSON often enough that it has to be recoverable: an empty object reaches the tool, the
+  tool says what was wrong, and the model gets a chance to fix it — the same mechanism that
+  makes "1/7 is not a note value" survivable.
+- **A model is remembered per provider.** A local model id means nothing to Anthropic;
+  switching back and forth should not lose either choice.
+- **The base URL is normalised.** People paste what LM Studio shows them, which is
+  sometimes `http://localhost:1234`, sometimes with `/v1`, often with a trailing slash. All
+  three work rather than producing a 404 to guess at.
+- **No default model is guessed locally.** Anthropic's list is ordered and "newest Sonnet"
+  is meaningful; which of your local models is best for this is not something a name can
+  tell us, so it takes the first and lets you choose.
+
+The transport moved to `http.rs`, shared by both. It is still Apple-only for the reason it
+always was — `rustls` would need a C compiler for the Apple targets and cost us the
+cross-compile check — which does mean **LM Studio only works on the Apple build**, even
+though nothing about a local server requires it.
+
+### The settings icon
+
+12px, inherited from the button's text size, in a row of words. Now 20px, sized to the row
+rather than to the type.
+
+### What was verified
+
+- **367 Rust tests** (up from 343), clippy clean, `npm run build` clean, both Apple targets
+  compile-check.
+- New tests: the OpenAI dialect end to end (system prompt leading, one message per tool
+  result, tools rewrapped with the schema renamed, arguments as a string, as an object, and
+  malformed); URL normalisation in the four forms people paste; provider defaults; the note
+  diff in six cases including duplicates at one place; preferences round-tripping and a
+  settings file written before providers existed still loading.
+- In the browser preview: the provider picker and the server-address field, the re-process
+  button appearing only when the dials move and putting the progress stage up when pressed,
+  the thinking overlay, and the proposal editor with its narration and counts. The mock was
+  faked temporarily and reverted.
+
+### Not verified — needs a Mac and LM Studio
+
+1. **Whether a local model can actually drive this.** The tool surface is large and the
+   prompt is long. A small model may call tools with plausible nonsense, or narrate instead
+   of calling them. `tool_choice: "auto"` is set for that reason, but the honest answer is
+   that this needs trying against a real 7B–30B model.
+2. **Whether LM Studio's `/v1/models` shape matches.** Read as `data[].id`, which is the
+   OpenAI shape it documents.
+3. **Whether a plain-HTTP request through the `ureq` agent works**, given the agent is
+   configured with a TLS provider. It should ignore it for `http://`.
+4. **Whether an adjusted proposal applies cleanly**, particularly a new-track one, where
+   the base is empty and the replacement is a bare insert.
+
+### What a human should test manually
+
+- [ ] Move a dial: the result does not change until Re-process is pressed, and pressing it
+      shows the bar.
+- [ ] Change Snap-to: that still re-reads immediately, with the bar.
+- [ ] Reset returns the dials to the defaults, and the "adjusted" badge clears once
+      re-processed.
+- [ ] Describe an edit. The editor is covered while it thinks; the prompt is quoted back.
+- [ ] Press Stop waiting mid-request and confirm nothing lands when the answer arrives.
+- [ ] On the proposal: press Play — the suggestion sounds on the sampler. Drag a note and
+      confirm it sounds as it moves. `⌫` removes one. Apply, then undo: one step.
+- [ ] Close the proposal with ✕ and reopen it from "Hear & edit…" in the review bar.
+- [ ] Settings → AI → LM Studio, with the server running: the model list populates. Pick
+      one, describe an edit, and confirm it comes back with notes rather than prose.
+- [ ] Point it at a wrong port and confirm the error names the connection rather than
+      failing silently.
+- [ ] Switch back to Anthropic and confirm the model you had is still selected.
+## Phase 11 — the phone
+
+The app has always claimed iOS as a target and has had a handful of `max-width` media
+queries since Phase 1, added while checking that nothing overflowed at 390px. Nothing
+overflowing is not the same as making sense. This pass takes the position that a phone is
+a platform the UI has to be designed for rather than a narrow window it has to survive,
+and works through every surface on that basis.
+
+### The two axes are width and pointer, and they are not the same question
+
+The existing queries were all widths, which conflates "the screen is narrow" with "the
+input is a finger". They are different, and each has cases the other gets wrong: an iPad
+at 1024px needs 44pt targets and no hover, and a 400px-wide desktop window needs neither.
+Conflating them is how you end up with a resized window that suddenly has chunky buttons,
+or a tablet whose delete buttons only appear on a hover it will never receive.
+
+So the ladder in `styles/tokens.css` is width-only and decides *layout*, and
+`pointer: coarse` / `hover: none` decide *size and interaction*, orthogonally. The five
+width rungs are written out in that file with the reasoning for each; the two phone rungs
+are 430px wide (the widest iPhone standing up) and 460px tall paired with a coarse pointer
+(any iPhone lying down, and no iPad, whose shortest landscape is 768pt).
+
+### Safe areas were declared and never used
+
+`index.html` has had `viewport-fit=cover` from the start, which is what tells iOS to hand
+the app the whole screen — including the strip under the Dynamic Island and the one the
+home indicator lives in. Nothing in the app read `env(safe-area-inset-*)`, so the title bar
+would have shipped under the status bar and the bottom row of piano keys under the home
+indicator, where the system's swipe-up gesture also lives.
+
+Every inset is read through a `--safe-*` variable rather than calling `env()` at each site.
+The reason is that a fixed grid track has to fold the inset into its own height —
+`calc(var(--h-titlebar) + var(--safe-top))` — and spelling out the `env()` fallback again
+at each such site is how two of them end up disagreeing. It also has a happy side effect:
+the insets can be simulated in a desktop browser by overriding four variables, which is how
+the layout was checked at iPhone geometries on a machine with no iPhone.
+
+One case needed thought. The home indicator sits over whichever row is *last*, and which
+row that is changes when the console opens. Both candidates take the inset as their own
+padding and grow their own track by the same amount, so the surface meeting the bottom of
+the screen is always the one whose background belongs there.
+
+### Sticky hover is a bug on a touchscreen, so hover is now conditional
+
+iOS has no hover, so it synthesises one on tap and leaves it applied until you touch
+something else. A tapped transport button stays lit as though it were still under a cursor
+— in a bar where lit means *playing*, that reads as the app having got stuck. Every
+`:hover` rule in the app is now inside `@media (hover: hover)`, wrapped at the source
+rather than undone in a later layer, so a new hover rule that forgets the guard is visible
+in the file it was added to. Where hover was the only feedback, `:active` replaces it.
+
+The two rows that *reveal* their actions on hover — the track list and the project list —
+pin them visible on a coarse pointer. They already did so below 640px; keying it on the
+pointer as well is what gets it onto an iPad at full width.
+
+### 44pt is a chrome dimension, not a style
+
+Raising the control height to Apple's floor is one line, but a 44px control centred in a
+40px bar overflows it — which is exactly what happened: the Settings gear came out two
+points above the status bar on an iPad. The two numbers are one decision, so `--h-control`
+lives in `tokens.css` beside the bar heights and every rung that changes a bar height
+changes it knowing what has to fit inside.
+
+The deliberate exception is phone landscape, where the compact controls are 34px. On a
+393pt-tall screen, holding everything to 44 leaves the roll nothing; 34 is still a
+deliberate press, and those controls are wide even where they are not tall.
+
+### Bars the tokens had been lying about
+
+`.editor__bottom` declared two grid rows and has three children. The prompt bar was
+therefore sized by `--h-transport`, the transport by `--h-keyboard` — about twice its
+intended height, at every width since it was written — and the keyboard by an implicit
+auto row. It is invisible at desktop scale, where the result is merely roomy. It is not
+invisible on a phone, where it was the difference between a layout that fits and one that
+does not, and it made the height budget impossible to reason about because the tokens did
+not describe the bars they were named for. Three rows now. The proportions of the bottom
+chrome change on every platform as a result, and they change to what the tokens always
+said.
+
+### On a phone the keyboard is one octave, and that is not a style
+
+Two octaves is fifteen white keys. Across the ~330pt a phone has left after the octave
+controls that is 22pt a key, with the black keys on top of them 14pt wide — a third of what
+a fingertip can aim at, so every press is a coin toss between two semitones. No amount of
+styling fixes a key that is narrower than the finger pressing it, so the component asks
+the media query directly (`lib/useMediaQuery.ts`) and renders twelve semitones instead of
+twenty-four. A white key comes out at ~40pt. The octave buttons beside it, which matter far
+more once only one octave is on screen, are sized to match.
+
+That hook is deliberately the exception rather than a new habit: layout belongs in CSS, and
+it exists for the cases where the markup itself is wrong for the device rather than its
+presentation.
+
+### Lying down, the on-screen keys stood down — until the toolbar gave them a switch
+
+A phone on its side has 393pt of height. The title bar, prompt bar and transport are 152 of
+it before anything is drawn, and the keyboard wants another 97 with the home indicator's
+strip — leaving the piano roll under 150pt to hold a toolbar, a ruler and some notes. The
+result is a roll you cannot read above a keyboard you can barely play.
+
+So the two orientations divide the work: **lying down is for looking at the notes, standing
+up is for playing them.** In landscape the inspector comes back beside the roll (stacking
+is the right answer to *narrow* and the wrong answer to *short* — it spends the scarce axis
+to save the plentiful one), the track list becomes a horizontal strip of tabs, and the
+keyboard is hidden. The roll gets ~112pt of canvas instead of nothing.
+
+**This was the weakest decision in the pass**, and it did not survive contact with the
+toolbar branch. Hiding a feature by orientation is a real cost, and the honest fix is a
+keyboard you can collapse and restore in either orientation — which was a control the
+editor did not have. It has one now: the toolbar carries a Keys toggle, so the media query
+no longer guesses on the user's behalf and the rule is gone. What is left in landscape is
+making the row cheap when it is on. See "Reconciling the phone with the toolbar" at the end
+of this file.
+
+### The roll could not be navigated with a finger at all
+
+Not a styling problem, but it made the styling pointless: the canvas sets
+`touch-action: none` so the browser will not pan it, zoom is ⌘-scroll and pan is
+⇧-scroll, and every single pointer is already spoken for by drawing, selecting, dragging
+and scrubbing. A phone user could see whichever bars and pitches the roll happened to open
+on and reach no others.
+
+Two fingers now pan, and moving them apart or together zooms time about the point between
+them — the same anchoring rule the wheel handler uses, so the two feel like one behaviour.
+The maths is in `rollGestures.ts` with no React or canvas in it, and the wheel handler moved
+in beside it: they are one behaviour with two input devices and they have to agree.
+
+Three things were deliberate. It branches on *pointer count*, never on pointer type — a
+two-finger gesture is impossible with a mouse, so the desktop path is untouched. It measures
+from the start of the gesture rather than frame to frame, because an incremental version
+accumulates its own rounding and creeps under a finger that is holding still. And zoom is
+horizontal only: a gesture that changed the semitone height too would make every pan a
+small accidental zoom in whichever axis the fingers were less careful about.
+
+A second finger landing mid-drag cancels whatever the first was doing and any edit it
+already made *stands*, one undo away. The alternative is a pinch that silently reverts a
+drag you meant to keep.
+
+### The velocity lane yields before the grid does
+
+`VELOCITY_LANE_HEIGHT` was a flat 72px against a canvas floor of 160px, so on a short
+screen the canvas was styled taller than its box and the bottom — the lane — was clipped
+away rather than shrunk. It is now a function of the available height in
+`pianoRollGeometry.ts`: full size where there is room, 40px where there is not, and gone
+below that. A lane too thin to aim at is worse than no lane, because it still costs the
+height. Velocity is an adjustment to notes that already exist; the grid is where they come
+from.
+
+### The 700-line rule
+
+`PianoRoll.tsx` was on the debt register at ~750 and the gesture work pushed it to 810, so
+it split along the two seams the register already named: `RollToolbar.tsx` (a subcomponent),
+`rollGestures.ts` and `useRollShortcuts.ts` (interaction hooks). It is 672 now. `Editor.css`
+crossed 650 on the way and shed `ConsolePanel.css`, which is the console's own file beside
+the component that was already its own.
+
+### What was verified, and how
+
+Automated, on this Linux host:
+
+- **285 Rust tests** pass and clippy is clean, on the pure crates. The Tauri crate cannot
+  build here — `gdk-3.0` is not installed — which is why the README's verification list
+  excludes it. No Rust was touched in this pass; these are regression guards.
+- `cargo check --workspace --exclude unplugged` against **both** `aarch64-apple-darwin` and
+  `aarch64-apple-ios` — clean.
+- `tsc --noEmit && vite build` — clean.
+- A headless-Chromium sweep at **iPhone SE, 16 Pro and 16 Pro Max portrait, 16 Pro
+  landscape, iPad portrait and desktop**, with each device's real safe-area insets
+  simulated through the `--safe-*` variables. It asserts: no horizontal overflow; no
+  control in the fixed chrome under the status bar or the home indicator; no hit target in
+  the chrome below 44pt (34 in phone landscape, per the exception above); no text field
+  under 16px, which is the threshold at which WKWebView zooms the page in on focus and
+  never zooms back out; and no bar with `overflow: hidden` silently clipping a control out
+  of existence. Clean at all six.
+- Multi-touch driven through CDP at the real canvas: a two-finger pan moves the roll and
+  leaves the zoom alone, a pinch triples it, one finger still draws a note, and no
+  two-finger gesture draws a stray one.
+
+That sweep found and fixed six real defects, all of which were invisible at desktop width:
+the three-children-two-rows grid above, the title-bar overflow on any coarse pointer, a
+piano roll with **zero** height in landscape, the octave buttons silently flex-shrinking to
+32px, the Settings gear collapsing to 25px once the title was allowed to grow, and the
+project title truncating to "Unti…" behind a build stamp that had wrapped onto two lines.
+
+That last one settled a small argument with itself. The build stamp is in the title bar
+because "am I looking at the fix I just built" has no other answer once an OS caches an
+app, and a device is where you ask that most — so it is the one `.editor__stat` kept below
+900px. But a phone title bar has about 120pt spare after a back button and a Console
+toggle, and spending it on a version string leaves the project name as "U…". Which project
+you are in is what the bar is for. Settings → About carries the same build in full and
+already describes itself as the side that cannot lie, so at phone width the stamp goes and
+the name stays.
+
+### Not verified — needs a Mac and a phone
+
+Everything about how this behaves on the actual device. Chromium's `pointer: coarse` and
+`env(safe-area-inset-*)` are the same specifications WKWebView implements, but "the same
+specification" and "the same behaviour" have not been the same thing on this project before.
+Specifically at risk, in rough order of likelihood:
+
+1. **The keyboard-avoidance behaviour.** When the software keyboard opens for the prompt
+   field, iOS scrolls the page rather than resizing the viewport, and a `position: fixed`
+   layout can end up with its bottom bars under the keyboard or scrolled off. Nothing here
+   addresses that, because it cannot be reproduced or fixed blind. It is the most likely
+   thing to be wrong on first run.
+2. **`100dvh` under Tauri.** Guarded behind `@supports` for Safari 15.0–15.3, and in a
+   Tauri webview there is no dynamic browser chrome so it should equal `100%`. Should.
+3. **Whether the safe-area values are what iOS actually reports** for each device, and
+   whether they update on rotation without a reload.
+4. **Two-finger gestures against WKWebView's own.** A two-finger drag near the bottom edge
+   can be claimed by the system, and `user-scalable=no` is what is supposed to stop a pinch
+   zooming the whole UI instead of the roll. Both need a device.
+5. **Whether hiding the keyboard in landscape is tolerable in practice** rather than on
+   paper.
+
+### What a human should test on an iPhone
+
+- [ ] Portrait: confirm nothing sits under the Dynamic Island or the home indicator, in
+      both the picker and the editor, and with the console both open and closed.
+- [ ] Rotate to landscape and back with a project open. Confirm the layout changes, the
+      insets move to the sides, and nothing is left under the notch.
+- [ ] Tap a transport button and then tap elsewhere — confirm it does not stay lit.
+- [ ] Tap the tempo field. **Confirm the page does not zoom in.** If it does, the 16px
+      field rule is not taking effect and everything below it will be off-centre too.
+- [ ] With the software keyboard open on the prompt field, confirm the field is visible and
+      the Send button reachable. This is finding 1 above; expect trouble.
+- [ ] Two fingers on the roll: pan around, then pinch. Confirm the roll zooms and the whole
+      app does not.
+- [ ] One finger on the roll: draw a note, drag it, drag its right edge, marquee-select.
+      Confirm each still behaves as it does with a mouse.
+- [ ] Start a two-finger pinch while a note drag is in progress. Confirm the drag stops,
+      the note stays where the drag left it, and one undo puts it back.
+- [ ] Play the on-screen keys with a thumb; confirm you hit the note you aimed at, and that
+      the octave buttons are comfortable.
+- [ ] Long-press a piano key and a transport button — confirm no selection loupe or callout
+      appears.
+- [ ] Open Settings and the New Project sheet; confirm both rise from the bottom edge and
+      their buttons clear the home indicator.
+- [ ] Scroll the inspector to its end and keep flicking; confirm the page behind it does
+      not move.
+
+### The screen was loud, and it was loud in a specific way
+
+Reviewing the phone screenshots, the layout fit and still felt busy — so the next pass was
+about volume rather than geometry, and it applies at every width.
+
+**One label style was doing three jobs.** The uppercase, letterspaced, bold treatment was
+on section headings, on every field label, on the roll's control labels, and on the
+console's level column: sixteen of them on one screen. Emphasis that is applied to
+everything is not emphasis, it is just loudness — and the things that genuinely were
+headings had no way to stand out from the things that were captions. Uppercase now means
+*section* and means only that; a field label is quiet sentence case, and the console's
+level is lowercase because the colour of the rule down the entry's left edge was already
+carrying it.
+
+**Three readouts were stated twice.** The inspector carried the track name, the note count,
+the selection count and the instrument, each as a label above a value. The name and the
+count are the selected row of the track list a few inches away; the selection count is in
+the roll's own toolbar, beside the notes it counts. Repeating them did not make them
+clearer — it made the panel long enough that the things only it can tell you were below the
+fold. The instrument was the constant "Built-in sampler" under a note about an unbuilt
+phase; it returns when there is a choice to make. What is left is one quiet line, `ch 1 ·
+480 PPQ`, which is what nothing else shows. PPQ moved there out of the title bar, where it
+was debug information sitting in the app's primary chrome.
+
+**Repetition in the history was noise, not information.** Drawing five notes produced five
+rows reading "Insert note". Consecutive identical steps now fold into one row and a count.
+Undo still takes back one step, so a run of five shrinks to four rather than vanishing —
+the count is what makes that legible instead of surprising. Only consecutive runs fold; two
+bursts of drawing with an edit between them are two moments and stay two rows.
+
+**Two rules were drawn on the same line.** `.editor__bottom` had a top border, and so does
+every one of the three bars that can occupy its first row — the review and listening bars
+draw a 2px accent one. The container's is gone.
+
+**The velocity lane is now a share, not a number.** A fixed 72px is a quarter of a desktop
+roll and a third of a phone's, so the same number that reads as a footnote on one screen
+dominates the other. It takes at most a quarter of the roll's height, which on a phone
+means 40px and about 20% more grid.
+
+One thing was tried and reverted. Dropping the roll toolbar's control labels on a phone
+looked tidier in isolation and left two identical unlabelled sliders side by side — nothing
+about a slider says whether it zooms time or pitch. A control you have to experiment with
+is not tidier than a labelled one, only quieter about being unusable. The labels stayed and
+the standing hint went instead ("click to add · drag to select", on a device with nothing
+to click), which is what paid for them.
+
+The verification script grew a check out of this: a bar with `overflow: hidden` reports
+equal `scrollWidth` and `clientWidth` even when its flex children have shrunk into each
+other, so it now compares sibling rectangles. That is what caught the toolbar labels
+overlapping the sliders after the labels were restored.
+
+**Left alone deliberately.** The standing explanations in the transcription panel ("One note
+at a time. Chords are out of scope in this version…") and beside the project-tempo checkbox
+are three lines each and permanently on screen, which is the remaining prose weight in the
+inspector. They are also the only warning before you press Listen and get a confident
+transcription of a chord. Shortening them is an editorial decision about the app's voice
+rather than a layout one, so it is flagged rather than taken.
+
+### `npm run build:ios`
+
+`tauri ios build` is the whole build. The script around it exists because that command,
+run for the first time on a machine, fails in five ways that all look like a broken Tauri
+install rather than a missing prerequisite:
+
+1. **The `ios` subcommand does not exist off macOS.** The CLI compiles it out, so the error
+   is `unrecognized subcommand 'ios'`. Confirmed here — `npx tauri --help` on this Linux
+   host lists `android` and no `ios`.
+2. **Command Line Tools are not Xcode.** Everything the desktop build needs works with
+   them, so the first sign the iOS SDK is absent is a failure inside `xcodebuild`.
+3. **There is no Xcode project.** `tauri ios init` generates `src-tauri/gen/apple`, and
+   `.gitignore` excludes it — a pbxproj is unreviewable in a diff and the tree is
+   regenerable. A fresh clone therefore has nothing to build.
+4. **CocoaPods** is a dependency of the generated project, not of Tauri, so nothing in
+   `npm install` or `cargo` mentions it.
+5. **The Rust iOS targets** are separate rustup installs, and the error for a missing one
+   names a linker rather than a target.
+
+The script only runs `init` when `gen/apple` is absent, rather than every time. `init` is
+idempotent but it rewrites the project, and an ordinary build should not silently discard
+whatever was changed in Xcode.
+
+**It also closes the microphone gap**, which has been on the "needs a Mac" list since
+Phase 7. `NSMicrophoneUsageDescription` lives in `src-tauri/Info.plist`, which Tauri merges
+into the *macOS* bundle; iOS reads the plist inside the generated Xcode project instead.
+Without it, pressing Listen does not produce a permission denial — the process is killed
+the instant it touches the input device, and what you get is a crash report. Setting it by
+hand does not stay set, because `init` rewrites that file. So the string is copied across
+on every build, from the single place it is written, which also stops the two platforms
+drifting to different wording. If the macOS plist ever loses the key the script warns
+rather than silently shipping a build that dies on first use.
+
+**What was verified, and what was not.** The flag list in the usage block was checked
+against `crates/tauri-cli/src/mobile/ios/build.rs` at tag `tauri-cli-v2.11.4` — the exact
+CLI version installed — rather than remembered: `--debug`, `--target`, `--features`,
+`--config`, `--build-number`, `--open`, `--ci`, `--export-method`, `--no-sign`,
+`--archive-only` and `--ignore-version-mismatches` all exist there. The prerequisites and
+the three rustup targets come from Tauri's own prerequisites page.
+
+Everything else is unverified, and more than usually so: **this script has never run past
+its first check.** On this host it exits at the macOS test, which is the only path that has
+been exercised end to end. The syntax parses and `--help` prints, and that is the whole of
+what is known. Specifically unproven:
+
+- Whether `find`ing the generated plist at depth 2 actually locates it. The layout is
+  assumed to be `gen/apple/<product>_iOS/Info.plist`; if `init` puts it elsewhere the
+  microphone key is silently not copied, and the failure appears much later as a crash on
+  Listen. **Check the script's output for an "Adding NSMicrophoneUsageDescription" line on
+  the first run** — its absence is the tell.
+- Whether PlistBuddy's `Set`/`Add` quoting survives the description string, which contains
+  commas and an em dash.
+- Whether `tauri ios init` needs `--ci` to avoid prompting in this project's shape.
+- Whether a device build without an Apple Developer team fails before or after the checks —
+  `--no-sign` is the documented answer, unexercised.
+
+### What a human should test on a Mac
+
+- [ ] `npm run build:ios` on a clone that has never been built for iOS. Expect it to run
+      `tauri ios init` and then either build or fail inside Xcode; the failure is the
+      deliverable either way.
+- [ ] Confirm the run printed `Adding NSMicrophoneUsageDescription`, then check the value
+      in `src-tauri/gen/apple/*/Info.plist` matches `src-tauri/Info.plist` exactly.
+- [ ] `npm run build:ios -- --help` prints the header, and `-- --debug` reaches the CLI
+      rather than being swallowed by npm.
+- [ ] Temporarily `sudo xcode-select --switch /Library/Developer/CommandLineTools` and
+      confirm the script says so instead of failing inside xcodebuild. Switch back.
+- [ ] Run it on a device and press Listen — confirm the permission prompt appears with the
+      wording from `src-tauri/Info.plist`, rather than the app dying.
+
+---
+
+## Reconciling the phone with the toolbar
+
+Three branches were open off the same commit, none merged: this one (the phone), the
+toolbar/listen-overlay branch, and a modularity refactor. All three restructure the same
+files. This merges the toolbar branch in, on the basis that a touch layer is a *layer* and
+applies most cleanly on top of settled structure. The refactor branch is still outstanding
+and will conflict with the result — it splits `Editor.tsx` and `PianoRoll.tsx` again, in a
+different direction, and it splits `command.rs` independently of the split that landed here.
+
+### What each branch wanted, and who won
+
+The toolbar branch deleted `Transport.tsx`, `Transport.css` and `ListeningBar.css` — the
+transport moved into a single top toolbar, and listening became a full-screen overlay. A
+good deal of the phone work was written against exactly those files. So the merge was a
+port rather than a resolution: their structure, with the touch layer rebuilt on top of it.
+
+- **Structure is theirs, wholesale.** `Editor.tsx`, `Editor.css` and `TranscribeEditor.css`
+  were taken from their side and the phone layer re-applied, rather than merged hunk by
+  hunk. Hunk-merging a file whose markup has changed underneath produces something that
+  compiles and describes nothing.
+- **`PianoRoll.tsx` kept this branch's split** — the shortcuts and the wheel handler live
+  in `useRollShortcuts.ts` and `rollGestures.ts` now — and took their `shortcutsSuspended`
+  flag, which threads into the hook's existing read-only parameter. Their feature, this
+  branch's shape, one line of glue.
+- **The inspector's restraint pass was re-applied to `Inspector.tsx`**, which is where
+  their branch moved that markup. The duplicated readouts had come back with it.
+- **The prompt bar keeps their provider awareness at this branch's length.** They had
+  taught it to say different things for a missing key and a missing local model; the
+  Keychain paragraph underneath it is still three lines of prose in a control bar, and
+  still already said in Settings.
+
+### The keyboard toggle settles an argument this branch lost
+
+Phase 11 hid the on-screen keys in landscape because 393pt of height cannot hold the chrome
+and a legible roll, and something had to go. It was written up as the weakest decision in
+the pass, with the right fix named: a keyboard you can collapse in either orientation.
+Their branch built exactly that — the toolbar has a Keys toggle, and the inspector has a
+History one. So the media query that hid the keys is gone. Landscape now ships with them on
+and 76pt of roll canvas, one tap from 169.
+
+### What the toolbar needed that it did not have
+
+Their responsive ladder is 1500 → 1460 → 1180 → 1040, which is a window narrowing on a
+desktop. There was no phone rung, no safe-area inset, no `pointer: coarse`, and one
+unguarded `:hover`. Added here:
+
+- **The toolbar is the top element now**, so it takes the status-bar inset and the side
+  inset for a notch when the phone is on its side.
+- **On a phone the bar is one strip that scrolls sideways**, in both orientations and for
+  opposite reasons. Standing up, their two-row layout is ~460pt of controls in 377pt and
+  clips Save. Lying down there is width for the second row, but two rows come to 111pt of a
+  393pt screen — which left the piano roll **16pt of canvas**. One row brought that to 76.
+- **The clock's captions** were uppercase and letterspaced, which is the section-heading
+  voice; they are field labels and now read as ones.
+- **An 18px tempo stepper** is a cursor's target. 40px on a touch device — and `flex-shrink:
+  0`, without which they came out 14px wide however tall they were told to be.
+
+### Three traps, all of them the cascade
+
+Each of these produced a rule that was present, correct and doing nothing.
+
+1. **`global.css` loads after every feature stylesheet**, so it wins ties on specificity.
+   `.keys__typing { display: none }` lost to `.btn { display: inline-flex }`, and the
+   button stayed. Two classes fixes it; the same trick was already needed for
+   `.roll__select` and `.tracklist__item`, so it is a pattern rather than an incident.
+2. **A `padding` shorthand resets what a longhand set.** Their 1040px rule sets
+   `padding: var(--space-1) var(--space-2)`, which quietly discarded the toolbar's
+   `padding-top: var(--safe-top)` and put the bar back under the status bar. The phone
+   block restates all four sides.
+3. **`position: sticky` is bounded by its containing block, not by the scroll container.**
+   Pinning `.toolbar__centre` looked right and made the clock at its far end permanently
+   unreachable, because the centre is 647pt wide on a 393pt screen. `display: contents` on
+   the centre lets its two groups become items of the strip directly, so the transport
+   pins and the clock scrolls past it.
+
+### What the toolbar branch fixed that this one had wrong
+
+Their `.keys__controls` gained a Typing toggle, which made that column ~145pt tall inside a
+115pt row. A flex column does not overflow visibly — it lets the last child hang out of the
+bottom, which on a phone is under the home indicator. The octave-up button was there, and
+the layout check caught it. The column is a row on touch devices now, and on a phone the
+Typing toggle is not drawn at all: it plays these keys from a computer keyboard, and a
+phone does not have one. That is inapplicable UI rather than a feature hidden for space,
+and drawing it would cost ~70pt of the width that makes the keys playable.
+
+### What was verified
+
+- **342 Rust tests** and clippy clean on the pure crates; both Apple targets compile-check.
+- `tsc --noEmit && vite build` clean.
+- `scripts/check-phone-layout.mjs` clean at all six geometries, and the multi-touch checks
+  still pass against the merged roll.
+- The 700-line rule holds: five files came off the register between the two branches, and
+  nothing new is over.
+
+### Still not verified
+
+Everything in the Phase 11 "needs a Mac and a phone" list still stands, and the merge adds
+to it. Their branch's own unverified list — the audio session, the Keychain prompt, the
+listen overlay on a device — is unchanged by this merge and still applies. Specific to the
+reconciliation:
+
+- **The landscape roll is 76pt of canvas with the keys on.** That is thin, and the argument
+  for shipping it is that the Keys toggle is one tap away in the toolbar. Whether that
+  reads as a reasonable default or as a broken layout is a judgement only a phone can
+  settle.
+- **The toolbar strip's scroll affordance.** Nothing indicates that the bar continues past
+  the right edge. It was the same bet in the old transport bar and it is still a bet.
+
+---
+
+## Emptying the debt register
+
+The modularity branch was not merged — it forks from the same commit as everything else
+and conflicts with the toolbar work in ten files, including two independent splits of
+`command.rs`. But its *reasoning* was the valuable part, and the reasoning transplants
+without the conflicts.
+
+Four of its five remaining splits turned out to be free. `sequencer.rs`, `smf.rs`,
+`music.rs` and `unplugged-plugin/src/lib.rs` had not been touched by anything since the
+fork, so those commits cherry-pick cleanly and land with their original messages and
+authorship intact. That is worth knowing as a general move: when branches diverge, check
+which files actually diverged before deciding a branch is unmergeable. A branch can be
+dead as a whole and still contain commits that apply.
+
+`ai.rs` was the exception, and only in one place: the toolbar branch had moved the note
+diff out to `crate::diff`, while the modularity branch had moved the same code into
+`ai/diff.rs` along with everything else. Both were right about where the transaction
+building belongs — inside `ai/` — and the toolbar branch was right that a change to a
+list of notes has nothing to do with the model. So `ai/diff.rs` keeps the part that reads
+a diff out of a finished workspace and imports the type from `crate::diff`, and `ai/mod.rs`
+re-exports it so existing `ai::NoteDiff` paths still resolve.
+
+### The piano roll, and proving a refactor rather than asserting one
+
+`PianoRoll.tsx` was 683 — compliant, and one edit from not being. Its split could not be
+cherry-picked, because the file had since gained touch gestures and an adaptive velocity
+lane, so the seam was adopted and the code written against our version: `pianoRollPaint.ts`
+takes a scene and a context and reads nothing else, and `pianoRollTheme.ts` resolves the
+tokens a canvas cannot read for itself.
+
+Painting is one function rather than a file per layer, deliberately. On a canvas the order
+*is* the logic — the keyboard gutter is drawn after the notes so notes scrolled off the
+left are covered rather than clipped, and the playhead is drawn last so nothing hides it.
+Files per layer would let that ordering be changed by accident.
+
+**The extraction was verified as a pure refactor rather than assumed to be one**, and the
+check paid for itself immediately. Seven notes drawn at fixed coordinates, then a marquee
+dragged across them, checksummed mid-drag and after release: `2689976671` and `788254948`
+before the split and after it. Hoisting `size.width` to a bare `width` had collided with a
+note-local `width` inside the preview block; renaming the declaration without renaming its
+uses would have drawn every proposed note the full width of the canvas, and nothing about
+that is a type error.
+
+The one painted path the check does not reach is the preview overlay itself — it needs a
+proposal, and the browser mock cannot produce one without an API key. Its colours moved
+from inline `token()` calls into `RollTheme` with the others, which the compiler checked,
+but no pixel has confirmed it.
+
+### What the register is now
+
+Empty. It was nine files when the rule was written. The instruction that replaces it: a
+file that reaches 700 gets split in the change that took it there. A register is a list of
+things everyone has agreed to keep not doing, and this one took a year to clear.
+
+### What was verified
+
+- **342 Rust tests** pass and clippy is clean across every split; both Apple targets
+  compile-check.
+- `tsc --noEmit && vite build` clean; the layout harness clean at all six geometries with
+  the multi-touch checks still passing.
+- Every file in the repository is under 700 lines. The largest is `core/store.rs` at 656.
+
+The splits are structural and the test suite is what stands behind them — 217 of those
+tests are in `unplugged-core`, whose four largest files were the ones taken apart. Nothing
+here has been run on a Mac, and the plugin split in particular rearranges the C ABI's file
+layout without changing a signature: `cargo check` against both Apple targets is the whole
+of the evidence, and the AUv3 has still never been compiled.

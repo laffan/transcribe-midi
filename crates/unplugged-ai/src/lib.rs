@@ -18,7 +18,10 @@
 
 pub mod anthropic;
 pub mod error;
+pub mod http;
 pub mod keychain;
+pub mod openai;
+pub mod provider;
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -27,8 +30,8 @@ use unplugged_core::ai::{self, AiContext, ToolCall, Workspace};
 use unplugged_core::command::Transaction;
 use unplugged_core::Note;
 
-pub use anthropic::{ModelInfo, Usage};
 pub use error::{AiError, Result};
+pub use provider::{Endpoint, ModelInfo, Provider, Usage, LM_STUDIO_DEFAULT_URL};
 
 /// How many assistant turns the loop will take before giving up.
 ///
@@ -51,6 +54,9 @@ const NOTES_IN_CONTEXT: usize = 1000;
 /// What the caller asks for.
 pub struct EditRequest<'a> {
     pub prompt: &'a str,
+    /// Which service to ask, already configured. The key, when there is one, was read
+    /// from the Keychain by the caller and lives only as long as this request.
+    pub endpoint: &'a Endpoint,
     pub model: &'a str,
     pub context: AiContext,
     /// The notes the tools operate on. Empty when writing into a new track.
@@ -163,20 +169,12 @@ pub fn propose_edit(track: usize, request: &EditRequest<'_>) -> Result<EditPropo
         return Err(AiError::EmptyPrompt);
     }
 
-    let api_key = match keychain::api_key() {
-        Ok(key) => key,
-        Err(keychain::KeychainError::Missing) => return Err(AiError::NoApiKey),
-        Err(error) => return Err(error.into()),
-    };
-
     let system = system_prompt(request);
     let tools = ai::tool_definitions(&request.context);
     let mut workspace = Workspace::new(request.context, request.notes, request.selection);
 
-    let mut messages: Vec<Value> = vec![json!({
-        "role": "user",
-        "content": request.prompt.trim(),
-    })];
+    let mut turns: Vec<provider::Turn> =
+        vec![provider::Turn::Prompt(request.prompt.trim().to_string())];
 
     let mut steps: Vec<ToolStep> = Vec::new();
     let mut usage = Usage::default();
@@ -184,15 +182,14 @@ pub fn propose_edit(track: usize, request: &EditRequest<'_>) -> Result<EditPropo
     let mut truncated = true;
 
     for _turn in 0..MAX_TURNS {
-        let body = anthropic::send_message(
-            &api_key,
+        let reply = provider::send(
+            request.endpoint,
             request.model,
             &system,
-            &messages,
+            &turns,
             &tools,
             MAX_TOKENS,
         )?;
-        let reply = anthropic::parse_reply(&body)?;
         usage.add(&reply.usage);
 
         if !reply.text.is_empty() {
@@ -208,9 +205,8 @@ pub fn propose_edit(track: usize, request: &EditRequest<'_>) -> Result<EditPropo
             return Err(AiError::ToolLimit(steps.len() + reply.tool_uses.len()));
         }
 
-        // Echoed verbatim: thinking blocks carry signatures that any reconstruction of
-        // the content array would invalidate.
-        messages.push(json!({"role": "assistant", "content": reply.content}));
+        // Carried, not rebuilt: what a provider needs back is its own business.
+        turns.push(provider::Turn::Reply(reply.echo));
 
         let mut results = Vec::with_capacity(reply.tool_uses.len());
         for use_block in &reply.tool_uses {
@@ -223,18 +219,10 @@ pub fn propose_edit(track: usize, request: &EditRequest<'_>) -> Result<EditPropo
                 ok,
             });
 
-            results.push(json!({
-                "type": "tool_result",
-                "tool_use_id": use_block.id,
-                "content": text,
-                // A failed tool comes back as an error the model can read and correct,
-                // not as a dead conversation. Half of what makes the loop usable is that
-                // "1/7 is not a note value" is something it can act on.
-                "is_error": !ok,
-            }));
+            results.push(provider::ToolResult { id: use_block.id.clone(), text, ok });
         }
 
-        messages.push(json!({"role": "user", "content": results}));
+        turns.push(provider::Turn::ToolResults(results));
     }
 
     let diff = workspace.diff();
@@ -287,16 +275,10 @@ fn edit_label(prompt: &str) -> String {
     format!("AI: {}…", short.trim_end())
 }
 
-/// The models this key can use, newest first, plus the one to select by default.
-pub fn available_models() -> Result<(Vec<ModelInfo>, Option<String>)> {
-    let api_key = match keychain::api_key() {
-        Ok(key) => key,
-        Err(keychain::KeychainError::Missing) => return Err(AiError::NoApiKey),
-        Err(error) => return Err(error.into()),
-    };
-
-    let models = anthropic::list_models(&api_key)?;
-    let default = anthropic::default_model(&models);
+/// The models this endpoint can reach, plus the one to select by default.
+pub fn available_models(endpoint: &Endpoint) -> Result<(Vec<ModelInfo>, Option<String>)> {
+    let models = provider::models(endpoint)?;
+    let default = provider::default_model(endpoint, &models);
     Ok((models, default))
 }
 
@@ -328,9 +310,19 @@ mod tests {
         }
     }
 
-    fn request<'a>(prompt: &'a str, notes: &'a [Note], selection: &'a [usize]) -> EditRequest<'a> {
+    fn endpoint() -> Endpoint {
+        Endpoint::anthropic("sk-ant-not-a-real-key".into())
+    }
+
+    fn request<'a>(
+        prompt: &'a str,
+        notes: &'a [Note],
+        selection: &'a [usize],
+        endpoint: &'a Endpoint,
+    ) -> EditRequest<'a> {
         EditRequest {
             prompt,
+            endpoint,
             model: "claude-sonnet-5",
             context: context(),
             notes,
@@ -343,7 +335,7 @@ mod tests {
     #[test]
     fn an_empty_prompt_never_reaches_the_network() {
         let notes = vec![Note::new(60, 0, 480, 96, 0).unwrap()];
-        let error = propose_edit(0, &request("   ", &notes, &[])).unwrap_err();
+        let error = propose_edit(0, &request("   ", &notes, &[], &endpoint())).unwrap_err();
         assert!(matches!(error, AiError::EmptyPrompt));
     }
 
@@ -353,7 +345,7 @@ mod tests {
             Note::new(60, 0, 480, 96, 0).unwrap(),
             Note::new(64, 480, 480, 96, 0).unwrap(),
         ];
-        let prompt = system_prompt(&request("make it swing", &notes, &[1]));
+        let prompt = system_prompt(&request("make it swing", &notes, &[1], &endpoint()));
 
         assert!(prompt.contains("Piano"));
         assert!(prompt.contains("120 bpm"));
@@ -372,7 +364,8 @@ mod tests {
             Note::new(72, 0, 480, 96, 0).unwrap(),
             Note::new(74, 480, 480, 96, 0).unwrap(),
         ];
-        let mut request = request("add a bass line under this", &[], &[]);
+        let endpoint = endpoint();
+        let mut request = request("add a bass line under this", &[], &[], &endpoint);
         request.reference = Some(("Melody", &melody));
 
         let prompt = system_prompt(&request);
@@ -385,7 +378,7 @@ mod tests {
     #[test]
     fn no_reference_means_no_mention_of_one() {
         let notes = vec![Note::new(60, 0, 480, 96, 0).unwrap()];
-        let prompt = system_prompt(&request("quantize", &notes, &[]));
+        let prompt = system_prompt(&request("quantize", &notes, &[], &endpoint()));
         assert!(!prompt.contains("NEW, empty track"));
         assert!(!prompt.contains("reference"));
     }
@@ -393,7 +386,7 @@ mod tests {
     #[test]
     fn an_empty_selection_is_described_as_the_whole_track() {
         let notes = vec![Note::new(60, 0, 480, 96, 0).unwrap()];
-        let prompt = system_prompt(&request("quantize", &notes, &[]));
+        let prompt = system_prompt(&request("quantize", &notes, &[], &endpoint()));
         assert!(prompt.contains("whole track"), "{prompt}");
     }
 

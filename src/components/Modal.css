@@ -45,6 +45,7 @@
 .modal__body {
   padding: var(--space-4);
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -59,4 +60,76 @@
   border-top: 1px solid var(--border);
   background: var(--bg-2);
   flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * A sheet rather than a card.
+ *
+ * A 420px card inside 24px of overlay padding is 327pt wide on an iPhone SE and floats
+ * in the middle of the screen, which on a phone reads as a web page's idea of a dialog.
+ * Rising from the bottom edge is what a modal does on iOS, and it puts the buttons —
+ * the part you answer with — at the end of the screen your thumb is already at, rather
+ * than in the middle where it has to stretch.
+ */
+@media (max-width: 430px) {
+  .modal__overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal,
+  .modal--wide {
+    max-width: none;
+    /* Not full height: the strip of dimmed app above the sheet is what says this is a
+       layer over something rather than a screen that replaced it, and tapping it is
+       how you dismiss. */
+    max-height: 88dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  .modal__header {
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  }
+
+  .modal__body {
+    padding: var(--space-4) calc(var(--space-4) + var(--safe-right)) var(--space-4)
+      calc(var(--space-4) + var(--safe-left));
+  }
+
+  /* The footer is the last thing on screen, so it is what the home indicator sits on. */
+  .modal__footer {
+    padding: var(--space-3) calc(var(--space-4) + var(--safe-right))
+      calc(var(--space-3) + var(--safe-bottom)) calc(var(--space-4) + var(--safe-left));
+  }
+
+  /* Equal halves. Confirm and Cancel are the same size because on a touch screen the
+     cost of hitting the wrong one is the same either way. */
+  .modal__footer .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/*
+ * Lying down there is 393pt of height in total, and a sheet with a header, a body and a
+ * footer needs most of it — so it takes the whole screen and stops pretending to float.
+ */
+@media (max-height: 460px) and (pointer: coarse) {
+  .modal__overlay {
+    padding: var(--space-2);
+  }
+
+  .modal {
+    max-height: calc(100dvh - var(--space-4));
+  }
+
+  .modal__body {
+    padding: var(--space-3) var(--space-4);
+    gap: var(--space-3);
+  }
 }

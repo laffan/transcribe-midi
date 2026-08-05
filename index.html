@@ -2,7 +2,20 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` puts the webview under the Dynamic Island and the home
+      indicator; the chrome insets itself with env(safe-area-inset-*) rather than
+      letting iOS letterbox the app. `user-scalable=no` is what stops a pinch on the
+      piano roll from zooming the whole UI instead of the grid.
+    -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <!-- Standalone chrome when the browser preview is added to a phone home screen. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Unplugged" />
+    <!-- Matches --bg-1 in each theme, so the status bar does not read as a seam. -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15171c" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <title>Unplugged</title>
     <!-- Inline so there is no extra request (and no 404 when one is not bundled). -->
     <link

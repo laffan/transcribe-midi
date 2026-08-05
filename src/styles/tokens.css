@@ -126,15 +126,117 @@
   --transition-fast: 90ms ease;
   --transition-med: 160ms ease;
 
-  /* Fixed chrome heights, referenced by the editor grid. */
+  /* Fixed chrome heights. The editor's toolbar is deliberately not among them — it
+     wraps to two rows in a narrow window, so a fixed height would clip it, and
+     `--h-titlebar` now sizes only the project picker's bar. */
   --h-titlebar: 40px;
-  --h-transport: 56px;
   --h-keyboard: 116px;
   --h-console: 132px;
   --w-inspector: 296px;
 
+  /* Height of a button or a field. One token so the touch layer can raise every
+     control to the finger minimum in a single place. */
+  --h-control: 30px;
+
   --z-modal: 100;
   --z-toast: 200;
+}
+
+/* ------------------------------------------------------------ safe areas -- */
+
+/*
+ * `viewport-fit=cover` in index.html hands the app the whole screen, including the
+ * strip under the Dynamic Island and the strip the home indicator lives in — so every
+ * edge of the chrome has to inset itself or it ships underneath hardware.
+ *
+ * Read through variables rather than calling env() at each site: a fixed-height grid
+ * track has to fold the inset into its own height
+ * (`calc(var(--h-titlebar) + var(--safe-top))`), and spelling the env() fallback out
+ * again at every such site is how the fallbacks drift apart.
+ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* ----------------------------------------------------------- breakpoints -- */
+
+/*
+ * Five rungs, and every width query in the app is one of them. They are written out
+ * here because a media query cannot read a custom property, so the only thing keeping
+ * them consistent is this list and the discipline to use it.
+ *
+ *   max-width: 900px    the inspector can no longer sit beside the roll; it stacks
+ *   max-width: 720px    the single-row bars (prompt, review, listening) wrap
+ *   max-width: 640px    secondary readouts drop; hover-revealed actions pin visible
+ *   max-width: 430px    PHONE PORTRAIT. The widest iPhone in portrait is 430pt
+ *                       (16 Pro Max) and the narrowest is 375pt (SE), so this rung is
+ *                       every iPhone standing up and no iPad (768pt).
+ *   max-height: 460px   PHONE LANDSCAPE. An iPhone lying down is 393–430pt tall; the
+ *                       shortest iPad in landscape is 768pt. Paired with
+ *                       `pointer: coarse` so a short *desktop window* is unaffected.
+ *
+ * Orthogonal to all five: `pointer: coarse` / `hover: none` — a finger, at any size.
+ * Width decides what the layout is; pointer decides how big it has to be and whether
+ * hover means anything. Keeping those two apart is what stops an iPad at 1024px from
+ * getting 30px hit targets, and a 400px-wide desktop window from getting 44px ones.
+ */
+
+/*
+ * Touch, at any screen size.
+ *
+ * Apple's floor for a hit target is 44×44pt and the app's controls are 30px because
+ * they were drawn for a cursor, so the control token goes up — and every bar that
+ * holds one has to go up with it, or the control overflows the bar it is centred in
+ * and ends up two points under the status bar. That coupling is the reason this lives
+ * here beside the heights rather than in the touch layer with the rest of the finger
+ * rules: `--h-control` is a chrome dimension, and the chrome has to agree with it.
+ *
+ * First of the three device blocks, so the phone rungs below can still say something
+ * different about a bar without having to restate the control size too.
+ */
+@media (pointer: coarse) {
+  :root {
+    --h-control: 44px;
+    --h-titlebar: 52px;
+  }
+}
+
+/*
+ * Phone portrait. The fixed chrome is a far bigger share of a 393×852 screen than of a
+ * window, so the bars hand height back to the roll — while the controls inside them get
+ * *larger*, per the block above. Those two only fight each other if a bar insists on
+ * keeping its full desktop contents, which is what the per-feature phone blocks settle.
+ */
+@media (max-width: 430px) {
+  :root {
+    --h-titlebar: 48px;
+    --h-keyboard: 124px;
+    --h-console: 148px;
+
+    /* One step up across the small end of the scale. 11px is a comfortable caption on
+       a display you look at from 50cm and an unreadable one at arm's length. */
+    --text-xs: 12px;
+    --text-sm: 13px;
+    --text-md: 14px;
+    --text-lg: 16px;
+  }
+}
+
+/*
+ * Phone landscape. 393pt of height, of which the desktop chrome would take two thirds
+ * before the roll gets a pixel. Everything fixed shrinks, and the keyboard shrinks
+ * hardest — lying down is the posture for looking at the notes, and the phone is one
+ * rotation away from the posture for playing them.
+ */
+@media (max-height: 460px) and (pointer: coarse) {
+  :root {
+    --h-titlebar: 48px;
+    --h-keyboard: 76px;
+    --h-console: 108px;
+  }
 }
 
 /* Respect the OS reduced-motion setting rather than animating regardless. */

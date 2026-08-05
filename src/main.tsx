@@ -5,6 +5,8 @@ import { App } from "./App";
 import { logger } from "./lib/console";
 import { applyTheme, loadTheme } from "./lib/theme";
 import "./styles/global.css";
+// After global.css: the finger layer overrides the base controls it defines.
+import "./styles/touch.css";
 
 // Apply the stored theme before first paint so there is no light-to-dark flash.
 applyTheme(loadTheme());

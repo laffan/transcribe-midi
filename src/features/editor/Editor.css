@@ -1,12 +1,21 @@
 /*
- * Editor chrome. The layout is a fixed grid: title bar, a flexible main row split into
- * the wide left column and the narrow inspector, then a fixed bottom bar. The console
- * is an extra row that appears only when toggled.
+ * Editor chrome. The layout is a grid: the toolbar, a flexible main row split into the
+ * wide left column and the narrow inspector, then the bottom bar. The console is an
+ * extra row that appears only when toggled, and the inspector and the keyboard are rows
+ * and columns that the toolbar's toggles remove entirely rather than hide — a hidden
+ * panel that still holds its space is not hidden. The console rules live in
+ * ConsolePanel.css beside the component; the only thing said about it here is what its
+ * presence does to the rows around it.
+ *
+ * Safe areas. `viewport-fit=cover` means the top row starts under the Dynamic Island and
+ * the bottom row ends under the home indicator. The toolbar is `auto` and takes its own
+ * top inset (see Toolbar.css); everything that meets the bottom of the screen takes the
+ * bottom inset here, because which element that *is* changes with two toggles.
  */
 
 .editor {
   display: grid;
-  grid-template-rows: var(--h-titlebar) 1fr auto;
+  grid-template-rows: auto 1fr auto;
   height: 100%;
   background: var(--bg-0);
   overflow: hidden;
@@ -25,35 +34,7 @@
 }
 
 .editor--console {
-  grid-template-rows: var(--h-titlebar) 1fr auto var(--h-console);
-}
-
-/* ------------------------------------------------------------- titlebar -- */
-
-.editor__titlebar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-1);
-  min-width: 0;
-}
-
-.editor__title {
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  min-width: 0;
-}
-
-.editor__stat {
-  font-size: var(--text-xs);
-  color: var(--text-2);
-}
-
-.btn--active {
-  background: var(--accent-muted);
-  color: var(--accent);
+  grid-template-rows: auto 1fr auto calc(var(--h-console) + var(--safe-bottom));
 }
 
 /* ----------------------------------------------------------------- main -- */
@@ -63,6 +44,10 @@
   grid-template-columns: 1fr var(--w-inspector);
   min-height: 0;
   min-width: 0;
+}
+
+.editor--no-history .editor__main {
+  grid-template-columns: 1fr;
 }
 
 .editor__tracks {
@@ -85,10 +70,10 @@
 
 .editor__panel-title {
   font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-medium);
   color: var(--text-2);
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
 }
 
 .editor__roll {
@@ -102,13 +87,6 @@
   /* The first-run doors float over the grid rather than replacing it, so drawing a note
      by hand stays one click away. */
   position: relative;
-}
-
-.editor__dirty {
-  color: var(--accent);
-  margin-left: var(--space-1);
-  font-size: var(--text-lg);
-  line-height: 1;
 }
 
 .inspector__shortcuts {
@@ -139,6 +117,7 @@
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg-1);
 }
 
@@ -148,6 +127,7 @@
   list-style: none;
   padding: var(--space-1);
   overflow-y: auto;
+  overscroll-behavior: contain;
   max-height: 40%;
   flex-shrink: 0;
 }
@@ -163,8 +143,18 @@
   transition: background var(--transition-fast);
 }
 
-.tracklist__item:hover {
-  background: var(--bg-2);
+/* Selecting a track is how you choose what records, what plays and what the AI edits,
+   so it is a row you have to be able to hit rather than a line of text. */
+@media (pointer: coarse) {
+  .tracklist__item {
+    min-height: var(--h-control);
+  }
+}
+
+@media (hover: hover) {
+  .tracklist__item:hover {
+    background: var(--bg-2);
+  }
 }
 
 .tracklist__item--selected {
@@ -196,9 +186,14 @@
   font-size: var(--text-xs);
 }
 
-.tracklist__item:hover .tracklist__remove,
 .tracklist__item:focus-within .tracklist__remove {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .tracklist__item:hover .tracklist__remove {
+    opacity: 1;
+  }
 }
 
 /* ------------------------------------------------------------ inspector -- */
@@ -210,16 +205,23 @@
   padding: var(--space-3);
 }
 
-.inspector__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
-
 .inspector__value {
   font-size: var(--text-sm);
   color: var(--text-0);
   padding: var(--space-1) 0;
+}
+
+/*
+ * Two constants about the open track, on one line. A label above each would be two more
+ * rows to say what "ch 1" and "480 PPQ" already say — the label-above-value form earns
+ * its height when the value is something you change, and neither of these is.
+ */
+.inspector__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-2);
 }
 
 .inspector__rule {
@@ -229,190 +231,56 @@
 
 /* --------------------------------------------------------------- bottom -- */
 
+/*
+ * What is left below the roll: the prompt bar and the keys. Both are surfaces you type
+ * into rather than press, which is why they are the two that did not move up to the
+ * toolbar with the rest of the controls.
+ *
+ * No border of its own: the prompt bar, the review bar and the listening bar each draw
+ * their own top edge — the last two a 2px accent one — and a rule here put a second line
+ * directly underneath every one of them.
+ *
+ * Which row the home indicator sits over depends on two toggles, so each candidate takes
+ * the inset as its own padding and grows its own track by the same amount. The surface
+ * meeting the bottom of the screen is then always the one whose background belongs
+ * there, rather than a strip of window grey under a keyboard that stopped short.
+ */
 .editor__bottom {
   display: grid;
-  grid-template-rows: var(--h-transport) var(--h-keyboard);
-  border-top: 1px solid var(--border);
+  grid-template-rows: auto calc(var(--h-keyboard) + var(--safe-bottom));
   background: var(--bg-1);
   flex-shrink: 0;
 }
 
-.editor__transport,
-.editor__keyboard {
-  padding: var(--space-2) var(--space-3);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
+/* An explicit row exists whether or not anything is in it, so the row goes too — and
+   with the keys gone the prompt bar is what meets the bottom of the screen. */
+.editor--no-keyboard .editor__bottom {
+  grid-template-rows: auto;
+  padding-bottom: var(--safe-bottom);
+}
+
+/* Unless the console is open, in which case that is the last row and takes it instead
+   (see ConsolePanel.css). */
+.editor--console .editor__bottom {
+  grid-template-rows: auto var(--h-keyboard);
+}
+
+.editor--console.editor--no-keyboard .editor__bottom {
+  padding-bottom: 0;
 }
 
 .editor__keyboard {
+  padding: var(--space-2) calc(var(--space-3) + var(--safe-right))
+    calc(var(--space-2) + var(--safe-bottom)) calc(var(--space-3) + var(--safe-left));
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
 }
 
-/* -------------------------------------------------------------- console -- */
-
-.console {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-top: 1px solid var(--border);
-  background: var(--bg-inset);
-}
-
-.console__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.console__title {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  color: var(--text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding-left: var(--space-1);
-}
-
-.console__count {
-  font-size: var(--text-xs);
-}
-
-.console__body {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.console__empty {
-  padding: var(--space-3);
-  font-size: var(--text-sm);
-}
-
-.console__list {
-  list-style: none;
-}
-
-.console__entry {
-  display: flex;
-  gap: var(--space-2);
-  padding: 2px var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: 1.6;
-  border-left: 2px solid transparent;
-}
-
-.console__entry:hover {
-  background: var(--bg-1);
-}
-
-.console__entry--warn {
-  border-left-color: var(--warning);
-}
-.console__entry--error {
-  border-left-color: var(--danger);
-}
-
-.console__time {
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-
-.console__level {
-  width: 42px;
-  flex-shrink: 0;
-  color: var(--text-2);
-  text-transform: uppercase;
-}
-
-.console__entry--warn .console__level {
-  color: var(--warning);
-}
-.console__entry--error .console__level {
-  color: var(--danger);
-}
-
-.console__message {
-  color: var(--text-1);
-  word-break: break-word;
-}
-
-.console__detail {
-  color: var(--text-2);
-}
-
-/* ---------------------------------------------------------- placeholder -- */
-
-/* Phase markers. These are scaffolding for unbuilt panels — they name the phase that
-   fills them in so the shell never looks like a finished-but-broken feature. */
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  height: 100%;
-  padding: var(--space-4);
-  text-align: center;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  color: var(--text-2);
-}
-
-.placeholder--compact {
-  align-items: flex-start;
-  text-align: left;
-  gap: var(--space-1);
-  padding: var(--space-3);
-}
-
-/* One row, for the fixed-height bottom bar. The description truncates rather than
-   wrapping, since the row cannot grow to fit it. */
-.placeholder--inline {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
-  text-align: left;
-  padding: 0 var(--space-3);
-  overflow: hidden;
-}
-
-.placeholder--inline .placeholder__detail {
-  flex: 1;
-  min-width: 0;
-  max-width: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.placeholder--inline .placeholder__phase,
-.placeholder--inline .placeholder__title {
-  flex-shrink: 0;
-}
-
-.placeholder__phase {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--accent);
-}
-
-.placeholder__title {
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  color: var(--text-1);
-}
-
-.placeholder__detail {
-  font-size: var(--text-xs);
-  max-width: 46ch;
+.editor--console .editor__keyboard {
+  padding-bottom: var(--space-2);
 }
 
 /* -------------------------------------------------------------- failure -- */
@@ -431,11 +299,12 @@
 /* --------------------------------------------------------------- narrow -- */
 
 @media (max-width: 900px) {
-  /* On iPhone-width the inspector cannot sit beside the roll; it stacks below. */
+  /* The inspector cannot sit beside the roll at this width; it stacks below. */
   .editor__main {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .editor__inspector {
@@ -448,47 +317,169 @@
     border-right: none;
   }
 
-  /* Without a floor the roll collapses to nothing once the inspector stacks under it. */
+  /*
+   * Without a floor the roll collapses to nothing once the inspector stacks under it.
+   * A share of the viewport rather than a flat 200px: stacked, the roll takes exactly
+   * its floor and nothing more, so on a tall screen a fixed floor leaves a 200px roll
+   * with several hundred points of empty inspector scrolling under it.
+   */
   .editor__roll {
-    min-height: 200px;
+    min-height: max(200px, 30dvh);
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+@media (max-width: 430px) {
+  .editor__roll {
+    min-height: max(240px, 34dvh);
   }
 
-  /* Touch has no hover. */
+  /* The tracklist is a list of two or three things on a phone; 40% of the column is
+     a lot of screen to hold in reserve for the fourth. */
+  .tracklist {
+    max-height: 30%;
+  }
+
+  /*
+   * The heading rows are pure furniture — a word and a button — and there are two of
+   * them above the fold. At desktop padding they cost 60pt each, which is a quarter of
+   * what the roll gets on this screen.
+   */
+  .editor__panel-head {
+    padding: 0 var(--space-2);
+    min-height: 48px;
+  }
+
+  .editor__keyboard {
+    padding: var(--space-1) calc(var(--space-1) + var(--safe-right))
+      calc(var(--space-1) + var(--safe-bottom)) calc(var(--space-1) + var(--safe-left));
+  }
+
+  .editor--console .editor__keyboard {
+    padding-bottom: var(--space-1);
+  }
+
+  .inspector {
+    padding: var(--space-3) var(--space-3) var(--space-5);
+  }
+}
+
+/*
+ * The shortcut sheet is a list of chords on a device with no ⌘, no ⌥ and no arrow keys.
+ * Keyed on the pointer rather than the width because an iPad with a keyboard attached
+ * reports a fine pointer and should keep it, while an iPad without one should not.
+ */
+@media (pointer: coarse) and (hover: none) {
+  .inspector__shortcuts {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------ phone landscape -- */
+
+/*
+ * Lying down, a phone has 852pt of width and 393pt of height. Stacking the inspector
+ * under the roll is the right answer to *narrow* and the wrong answer to *short*: it
+ * spends the scarce axis to save the plentiful one. So the two-column layout comes back,
+ * and the roll gets the height the inspector is no longer standing in.
+ *
+ * The keyboard is not hidden here any more. It used to be — 393pt cannot hold the chrome
+ * and a legible roll, and something had to go — but the toolbar now carries a real
+ * Keys toggle, so the choice belongs to whoever is holding the phone rather than to a
+ * media query guessing on their behalf. What is left is making the row cheap when it is
+ * on, which is what `--h-keyboard: 76px` in tokens.css does.
+ */
+@media (max-height: 460px) and (min-width: 640px) and (pointer: coarse) {
+  .editor__main {
+    grid-template-columns: 1fr minmax(0, 34vw);
+    grid-template-rows: none;
+    overflow-y: hidden;
+  }
+
+  .editor--no-history .editor__main {
+    grid-template-columns: 1fr;
+  }
+
+  .editor__inspector {
+    border-top: none;
+    overflow-y: auto;
+    /* The notch is on one side when the phone is on its side. */
+    padding-right: var(--safe-right);
+  }
+
+  .editor__tracks {
+    border-right: 1px solid var(--border);
+    padding-left: var(--safe-left);
+  }
+
+  .editor__roll {
+    min-height: 0;
+  }
+
+  /*
+   * The tracklist lies down with the phone. As a column it is 44pt a row plus a heading,
+   * and there are only ever a handful of tracks — 110pt of the ~180 the whole main row
+   * has, spent on three names. As a strip it is one row, and the roll gets the rest.
+   */
+  .tracklist {
+    display: flex;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .tracklist > li {
+    flex: 0 0 auto;
+    max-width: 40%;
+  }
+
+  /* Two classes, to beat the blanket `[role="button"]` floor in styles/touch.css: a
+     strip is a row of tabs, and 44pt tabs are taller than the strip needs to be. */
+  .tracklist .tracklist__item {
+    min-height: 34px;
+    padding: var(--space-1) var(--space-2);
+    border-left: none;
+    border-bottom: 2px solid transparent;
+  }
+
+  .tracklist__item--selected {
+    border-bottom-color: var(--accent);
+  }
+
+  /* Delete lives in the row's own menu on a desktop; on a strip it is the one thing
+     that would double the height, and a track can be removed standing up. */
   .tracklist__remove {
-    opacity: 1;
-  }
-
-  .editor__stat {
     display: none;
   }
-}
 
-@media (max-width: 640px) {
-  /* No room for the explanatory line beside the label; the phase tag carries it. */
-  .placeholder--inline .placeholder__detail {
-    display: none;
+  .editor__panel-head {
+    padding: 0 var(--space-2);
+    min-height: 38px;
   }
-}
 
-/*
- * The shortcut list was outranking the two things the app is for. Collapsed by default —
- * it is reference material, and reference material does not need to be the tallest thing
- * in the inspector.
- */
-.inspector__shortcuts > summary {
-  cursor: pointer;
-  user-select: none;
-  list-style: revert;
-}
+  /*
+   * 34px, not the 44 the floor asks for. On a screen 393pt tall, holding every control
+   * to the full target size leaves the roll with nothing, so the compact controls in
+   * this orientation land at 34 — still a deliberate press, and wide enough that the
+   * area you are aiming at is comfortable even where the height is not. The deviation
+   * is confined to phone-landscape and written down in DECISIONS.md.
+   */
+  .editor__panel-head .btn {
+    height: 34px;
+  }
 
-.inspector__shortcuts[open] > summary {
-  margin-bottom: var(--space-2);
-}
+  .editor__keyboard {
+    padding-top: var(--space-1);
+  }
 
-/*
- * The build stamp. Quiet by default; amber when the build came from a modified working
- * tree, because that is the case where the commit hash is a half-truth.
- */
-.editor__build--dirty {
-  color: var(--warning);
+  /* The inspector is a narrow column here, so its rows stop trying to sit in pairs. */
+  .inspector {
+    gap: var(--space-3);
+    padding: var(--space-2);
+  }
 }

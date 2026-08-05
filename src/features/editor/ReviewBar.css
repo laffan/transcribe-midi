@@ -7,7 +7,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) calc(var(--space-3) + var(--safe-right)) var(--space-2)
+    calc(var(--space-3) + var(--safe-left));
   border-top: 2px solid var(--accent);
   background: var(--bg-2);
   min-width: 0;
@@ -74,6 +75,7 @@
   color: var(--text-1);
   max-height: 120px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .review__step--failed { color: var(--danger); }
@@ -92,5 +94,47 @@
   }
   .review__actions {
     flex-basis: 100%;
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * This bar exists to be answered, so on a phone the answer gets the whole width: the
+ * buttons share the row equally and are the largest targets on screen, which is right
+ * for the one place where a mis-tap either applies an edit you had not read or throws
+ * away one you had. Everything that is not the decision gives up its space to it.
+ */
+@media (max-width: 430px) {
+  .review {
+    gap: var(--space-2);
+    padding: var(--space-2) calc(var(--space-2) + var(--safe-right)) var(--space-2)
+      calc(var(--space-2) + var(--safe-left));
+  }
+
+  .review__actions {
+    gap: var(--space-2);
+    flex-wrap: nowrap;
+  }
+
+  .review__actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    /* Long labels ("Add to track") shrink rather than pushing the row wider than the
+       screen; the button stays a button either way. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    line-height: var(--h-control);
+    text-align: center;
+  }
+
+  /* Token counts are a receipt, not part of the decision. */
+  .review__usage {
+    display: none;
+  }
+
+  .review__steps {
+    max-height: 96px;
   }
 }

@@ -26,12 +26,12 @@
   flex-shrink: 0;
 }
 
+/* Names a control rather than a section, so it follows `.field__label`: quiet, and not
+   competing with the grid it sits above. */
 .roll__control-label {
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-normal);
   color: var(--text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .roll__select {
@@ -63,7 +63,82 @@
   display: block;
   position: absolute;
   inset: 0;
-  /* The canvas handles its own scroll and zoom via the wheel handler, so the browser
-     must not also pan or pinch it. */
+  /* The canvas handles its own scroll and zoom — the wheel handler with a cursor, the
+     two-finger gesture with a finger — so the browser must not also pan or pinch it. */
   touch-action: none;
 }
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * The toolbar carries a grid picker, two sliders and a hint across ~330pt, and it clips
+ * rather than scrolls, so something has to give. It is the hint: it says "click to add ·
+ * drag to select" on a device with nothing to click, and it is standing advice sitting
+ * next to controls you are already using.
+ *
+ * The labels stay. Dropping them was the first attempt and it left two identical
+ * unlabelled sliders side by side — nothing about a slider says whether it zooms time or
+ * pitch, and a control you have to experiment with is not tidier than one that is
+ * labelled, only quieter about being unusable. In sentence case at 12px they cost about
+ * 30pt each, which the hint has just freed.
+ */
+@media (max-width: 430px), (max-height: 460px) and (pointer: coarse) {
+  .roll__toolbar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  /* Including the selection count. A selected note is drawn selected — the number is a
+     desktop convenience, and here it is the ~80pt that decides whether the two sliders
+     get labels or not. */
+  .roll__hint {
+    display: none;
+  }
+
+  /*
+   * Two classes to beat `.input { width: 100% }`, which is defined in global.css and so
+   * comes later in the cascade than this file at equal specificity. Without it the menu
+   * takes half the bar and pushes the sliders into each other.
+   */
+  .roll .roll__select {
+    width: 78px;
+  }
+
+  /* A label is a fixed thing; the slider beside it is what absorbs the leftover. Without
+     this the labels shrink to nothing and end up overlapping the sliders they name. */
+  .roll__control-label {
+    flex: 0 0 auto;
+  }
+
+  .roll .roll__range {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 44px;
+  }
+
+  .roll__control {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-1);
+  }
+
+  .roll__control:first-child {
+    flex: 0 0 auto;
+  }
+}
+
+/*
+ * Lying down, the toolbar is competing with the grid for about 130pt. The sliders keep
+ * a grab zone you can hit but stop asking for the full 40 — this bar sits directly
+ * above the notes, and every point it takes is a semitone fewer on screen.
+ */
+@media (max-height: 460px) and (pointer: coarse) {
+  .roll .roll__select {
+    height: 34px;
+  }
+
+  .roll .roll__range {
+    height: 34px;
+  }
+}
+

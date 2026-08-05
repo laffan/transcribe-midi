@@ -196,6 +196,30 @@ export class MockEditor {
         return { label: "Quantize", commands: [{ op: "replace", track: request.track, indices: request.indices, notes }] };
       }
 
+      case "join": {
+        const selected = [...new Set(request.indices)]
+          .filter((i) => this.tracks[request.track]?.notes[i])
+          .sort((a, b) => a - b);
+        if (selected.length < 2) return { label: "Join notes", commands: [] };
+
+        const notes = selected.map((i) => this.tracks[request.track]!.notes[i]!);
+        const first = notes.reduce((a, b) => (orderKey(a) <= orderKey(b) ? a : b));
+        const start = Math.min(...notes.map((n) => n.start_ticks));
+        const end = Math.max(...notes.map((n) => n.start_ticks + n.duration_ticks));
+
+        return {
+          label: "Join notes",
+          commands: [
+            { op: "delete", track: request.track, indices: selected },
+            {
+              op: "insert",
+              track: request.track,
+              notes: [{ ...first, start_ticks: start, duration_ticks: Math.max(1, end - start) }],
+            },
+          ],
+        };
+      }
+
       case "paste": {
         if (request.notes.length === 0) return { label: "Paste", commands: [] };
         const earliest = Math.min(...request.notes.map((n) => n.start_ticks));
