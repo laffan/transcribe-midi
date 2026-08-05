@@ -1886,3 +1886,73 @@ are three lines each and permanently on screen, which is the remaining prose wei
 inspector. They are also the only warning before you press Listen and get a confident
 transcription of a chord. Shortening them is an editorial decision about the app's voice
 rather than a layout one, so it is flagged rather than taken.
+
+### `npm run build:ios`
+
+`tauri ios build` is the whole build. The script around it exists because that command,
+run for the first time on a machine, fails in five ways that all look like a broken Tauri
+install rather than a missing prerequisite:
+
+1. **The `ios` subcommand does not exist off macOS.** The CLI compiles it out, so the error
+   is `unrecognized subcommand 'ios'`. Confirmed here — `npx tauri --help` on this Linux
+   host lists `android` and no `ios`.
+2. **Command Line Tools are not Xcode.** Everything the desktop build needs works with
+   them, so the first sign the iOS SDK is absent is a failure inside `xcodebuild`.
+3. **There is no Xcode project.** `tauri ios init` generates `src-tauri/gen/apple`, and
+   `.gitignore` excludes it — a pbxproj is unreviewable in a diff and the tree is
+   regenerable. A fresh clone therefore has nothing to build.
+4. **CocoaPods** is a dependency of the generated project, not of Tauri, so nothing in
+   `npm install` or `cargo` mentions it.
+5. **The Rust iOS targets** are separate rustup installs, and the error for a missing one
+   names a linker rather than a target.
+
+The script only runs `init` when `gen/apple` is absent, rather than every time. `init` is
+idempotent but it rewrites the project, and an ordinary build should not silently discard
+whatever was changed in Xcode.
+
+**It also closes the microphone gap**, which has been on the "needs a Mac" list since
+Phase 7. `NSMicrophoneUsageDescription` lives in `src-tauri/Info.plist`, which Tauri merges
+into the *macOS* bundle; iOS reads the plist inside the generated Xcode project instead.
+Without it, pressing Listen does not produce a permission denial — the process is killed
+the instant it touches the input device, and what you get is a crash report. Setting it by
+hand does not stay set, because `init` rewrites that file. So the string is copied across
+on every build, from the single place it is written, which also stops the two platforms
+drifting to different wording. If the macOS plist ever loses the key the script warns
+rather than silently shipping a build that dies on first use.
+
+**What was verified, and what was not.** The flag list in the usage block was checked
+against `crates/tauri-cli/src/mobile/ios/build.rs` at tag `tauri-cli-v2.11.4` — the exact
+CLI version installed — rather than remembered: `--debug`, `--target`, `--features`,
+`--config`, `--build-number`, `--open`, `--ci`, `--export-method`, `--no-sign`,
+`--archive-only` and `--ignore-version-mismatches` all exist there. The prerequisites and
+the three rustup targets come from Tauri's own prerequisites page.
+
+Everything else is unverified, and more than usually so: **this script has never run past
+its first check.** On this host it exits at the macOS test, which is the only path that has
+been exercised end to end. The syntax parses and `--help` prints, and that is the whole of
+what is known. Specifically unproven:
+
+- Whether `find`ing the generated plist at depth 2 actually locates it. The layout is
+  assumed to be `gen/apple/<product>_iOS/Info.plist`; if `init` puts it elsewhere the
+  microphone key is silently not copied, and the failure appears much later as a crash on
+  Listen. **Check the script's output for an "Adding NSMicrophoneUsageDescription" line on
+  the first run** — its absence is the tell.
+- Whether PlistBuddy's `Set`/`Add` quoting survives the description string, which contains
+  commas and an em dash.
+- Whether `tauri ios init` needs `--ci` to avoid prompting in this project's shape.
+- Whether a device build without an Apple Developer team fails before or after the checks —
+  `--no-sign` is the documented answer, unexercised.
+
+### What a human should test on a Mac
+
+- [ ] `npm run build:ios` on a clone that has never been built for iOS. Expect it to run
+      `tauri ios init` and then either build or fail inside Xcode; the failure is the
+      deliverable either way.
+- [ ] Confirm the run printed `Adding NSMicrophoneUsageDescription`, then check the value
+      in `src-tauri/gen/apple/*/Info.plist` matches `src-tauri/Info.plist` exactly.
+- [ ] `npm run build:ios -- --help` prints the header, and `-- --debug` reaches the CLI
+      rather than being swallowed by npm.
+- [ ] Temporarily `sudo xcode-select --switch /Library/Developer/CommandLineTools` and
+      confirm the script says so instead of failing inside xcodebuild. Switch back.
+- [ ] Run it on a device and press Listen — confirm the permission prompt appears with the
+      wording from `src-tauri/Info.plist`, rather than the app dying.

@@ -38,7 +38,9 @@ src/                         React frontend.
   styles/touch.css           The finger layer: what changes when the pointer is coarse,
                              independently of how wide the screen is.
 scripts/                     install-plugin.sh / verify-plugin.sh — build, install,
-                             register and interrogate the plugin.
+                             register and interrogate the plugin. build-ios.sh — the
+                             preflight the iOS build needs before `tauri ios build`
+                             means anything.
 ```
 
 Dependency direction is one-way and enforced by the workspace: `unplugged-core` depends on
@@ -250,10 +252,27 @@ On a Mac:
 
 ```bash
 npm run tauri dev                    # the standalone app
+npm run build:ios                    # the iOS app — see below
+npx tauri ios dev                    # …on a simulator or a connected device
 scripts/install-plugin.sh --debug    # build + install + register the AUv3
 scripts/verify-plugin.sh             # what is installed / registered / offered to hosts
 auval -v aumi Unpl Lffn              # full AU validation
 ```
+
+`npm run build:ios` wraps `tauri ios build`, which needs five things this repository
+cannot provide and does not report clearly when they are missing: macOS, full Xcode
+rather than the Command Line Tools, CocoaPods, the three Rust iOS targets, and the
+generated Xcode project under `src-tauri/gen/apple` — which is untracked, because a
+pbxproj is unreviewable in a diff and the tree is regenerable. The script checks each,
+runs `tauri ios init` when there is no project yet, and passes every argument through
+(`npm run build:ios -- --debug`, `-- --no-sign`, `-- --open`). Its header explains why
+each check is there; `npm run build:ios -- --help` prints it.
+
+It also copies `NSMicrophoneUsageDescription` from `src-tauri/Info.plist` into the
+generated iOS plist on every build. That is the one entry the app genuinely cannot ship
+without — iOS kills the process the moment it touches the input device rather than
+denying permission — and the file it has to live in is rewritten by `tauri ios init`, so
+setting it by hand does not stay set.
 
 Builds are stamped (version + short commit + dirty flag) via `unplugged-core/build.rs`,
 shown in the app titlebar and the plugin window. When testing "did my fix load", trust the
