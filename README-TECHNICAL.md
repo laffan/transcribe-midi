@@ -287,6 +287,18 @@ without — iOS kills the process the moment it touches the input device rather 
 denying permission — and the file it has to live in is rewritten by `tauri ios init`, so
 setting it by hand does not stay set.
 
+Two things about that build are invisible in the failure they produce, both of them
+consequences of cargo running *inside* Xcode rather than beside it. Xcode exports every
+build setting into its "Build Rust Code" script phase, including `SDKROOT=…/iPhoneOS.sdk`,
+and SwiftPM reads `SDKROOT` to find the SDK for the **host** — so `Package.swift`, which is
+compiled for the host, gets an iOS sysroot and no standard library. `unplugged-audio`'s
+build script removes the variable from the `swift` child for that reason; do not put it
+back. And the iOS app links a Rust *staticlib*, which cannot carry the `-framework` flags a
+rustc link would have applied: a framework needed only by Rust has to be named in
+`tauri.conf.json` under `bundle.iOS.frameworks` (CoreMIDI is the one — the Swift objects
+autolink the rest), and that list reaches the project only when `tauri ios init`
+regenerates it.
+
 Builds are stamped (version + short commit + dirty flag) via `unplugged-core/build.rs`,
 shown in the app titlebar and the plugin window. When testing "did my fix load", trust the
 stamp, not the file timestamps — Logic caches AU scans and keeps extension processes alive.

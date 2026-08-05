@@ -200,9 +200,35 @@ fn host_has_swift() -> bool {
         .unwrap_or(false)
 }
 
+/// Run `swift build` in the package directory.
+///
+/// **`SDKROOT` is removed from the child's environment, and that is load-bearing.** When
+/// `tauri ios build` drives this, cargo runs from the generated Xcode project's "Build
+/// Rust Code" run-script phase, and Xcode exports every build setting into that phase —
+/// including `SDKROOT=…/iPhoneOS.sdk`. SwiftPM reads `SDKROOT` to pick the SDK for the
+/// **host**, and the first thing it does with that SDK is compile `Package.swift` for
+/// `arm64-apple-macosx`. A macOS target against an iOS sysroot has no standard library,
+/// so the manifest fails to compile — and what SwiftPM says is "Invalid manifest", which
+/// reads like a syntax error in a file nobody touched:
+///
+/// ```text
+/// error: 'unpluggedaudio': Invalid manifest (compiled with:
+///   [… -target arm64-apple-macosx14.0 … -sdk …/iPhoneOS26.5.sdk …])
+/// <unknown>:0: warning: using sysroot for 'iPhoneOS' but targeting 'MacOSX'
+/// <unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx14.0'
+/// ```
+///
+/// Removing it sends SwiftPM to its fallback, `xcrun --sdk macosx --show-sdk-path`, which
+/// is exactly what happens when the same cargo command is run from a terminal — so the
+/// build behaves the same whether Xcode or a shell started it. Nothing is lost: the SDK
+/// for the cross-build never came from the environment anyway, it is passed explicitly as
+/// `-Xswiftc -sdk` / `-Xcc -isysroot` above. It is also why only iOS shows this: an
+/// Xcode-driven *macOS* build (the AUv3's pre-build script) exports the macOS SDK, which
+/// is the one SwiftPM would have found for itself.
 fn run_swift(package_dir: &Path, profile: &str, extra: &[String], show_bin_path: bool) -> Output {
     let mut command = Command::new("swift");
     command.current_dir(package_dir).args(["build", "-c", profile]).args(extra);
+    command.env_remove("SDKROOT");
     if show_bin_path {
         command.arg("--show-bin-path");
     }

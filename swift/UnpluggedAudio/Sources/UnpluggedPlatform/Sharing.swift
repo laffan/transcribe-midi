@@ -1,10 +1,15 @@
 import Foundation
+// Unconditional: the one use of `UTType` is in the *iOS* branch of the pasteboard function
+// below, so this cannot sit in the platform block beside AppKit — macOS is the platform
+// that never names the type, and an import it does not need is not an error there, which
+// is exactly how a missing one hides. macOS 11 / iOS 14, below both of this package's
+// minimums.
+import UniformTypeIdentifiers
 
 #if os(iOS)
 import UIKit
 #else
 import AppKit
-import UniformTypeIdentifiers
 #endif
 
 /// Phase 5 platform surface: share sheet, pasteboard and drag-out.

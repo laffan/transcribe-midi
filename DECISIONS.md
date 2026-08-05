@@ -2829,3 +2829,110 @@ tests are in `unplugged-core`, whose four largest files were the ones taken apar
 here has been run on a Mac, and the plugin split in particular rearranges the C ABI's file
 layout without changing a signature: `cargo check` against both Apple targets is the whole
 of the evidence, and the AUv3 has still never been compiled.
+
+---
+
+## The iPad build, and a variable that belongs to Xcode
+
+`npm run build:ios` compiled the whole workspace for `aarch64-apple-ios` and then died in
+`unplugged-audio`'s build script with what reads like a broken `Package.swift`:
+
+```text
+error: 'unpluggedaudio': Invalid manifest (compiled with:
+  [… "-target", "arm64-apple-macosx14.0", … "-sdk", "…/iPhoneOS26.5.sdk" …])
+<unknown>:0: warning: using sysroot for 'iPhoneOS' but targeting 'MacOSX'
+<unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx14.0'
+```
+
+The manifest had not been touched, and the same file builds on macOS. The cause is in the
+flags rather than in the file: a **macOS** target compiled against an **iOS** sysroot.
+
+### `Package.swift` is a host program, and SwiftPM asks the environment where the host SDK is
+
+Before SwiftPM builds anything it compiles the manifest *for the machine it is running on*
+and executes it. That needs a macOS SDK, and the first place it looks is the environment:
+`SwiftSDK.systemSwiftSDK` reads `SDKROOT`, and only falls back to
+`xcrun --sdk macosx --show-sdk-path` when the variable is absent.
+
+`tauri ios build` runs `xcodebuild`; the generated project builds Rust from a run-script
+phase called "Build Rust Code"; and Xcode exports every build setting into a script phase's
+environment, `SDKROOT=…/iPhoneOS26.5.sdk` among them. So the manifest was compiled for
+`arm64-apple-macosx14.0` against an iPhoneOS sysroot, which holds no macOS standard
+library. SwiftPM calls the result an invalid manifest, which is why the error points at a
+file that is not wrong.
+
+**The fix is to take the variable away from the child.** `run_swift` in
+`crates/unplugged-audio/build.rs` now calls `env_remove("SDKROOT")`. Nothing is lost by
+it: the SDK for the cross-build never came from the environment. It is passed explicitly
+as `-Xswiftc -sdk` and `-Xcc -isysroot`, and an explicit flag beats anything SwiftPM
+infers. What the removal buys is that a build started by Xcode and a build started from a
+terminal now see the same environment, which is the property that was quietly missing.
+
+**Why the macOS build never showed this.** `install-plugin.sh` runs cargo from an Xcode
+pre-build script too, but there `SDKROOT` names the *macOS* SDK — the same one SwiftPM
+would have found for itself — so a lookup that is wrong by construction returned the right
+answer. The variable is only ever wrong when the platform being built is not the host, and
+nothing in this repository had built for one until now.
+
+### An import on the wrong side of the fence
+
+`Sharing.swift` puts a `.mid` on the pasteboard, and the iOS branch names the file-URL type
+as `UTType.fileURL.identifier`. `import UniformTypeIdentifiers` sat inside the `#else`,
+beside AppKit — the platform that never mentions `UTType`. The module was imported exactly
+where it is not needed and missing where it is, and macOS cannot notice, because an unused
+import is not an error. It is now imported unconditionally; the module is macOS 11 / iOS
+14, below both of this package's minimums.
+
+That is the shape of every Swift bug still ahead of us here: the code compiles on the
+platform it was written on, and the conditional branch nobody has ever built is where it is
+wrong. This one cost nothing to find once something finally pointed a compiler at iOS.
+
+### What Xcode links, and what a static archive cannot tell it
+
+The iOS app is not linked by rustc. Cargo produces a **staticlib** and Xcode links it, and
+information is lost at that boundary: `cargo:rustc-link-lib=framework=CoreMIDI` is an
+instruction to a rustc link that never happens, and a `.a` has nowhere to record it. Swift
+and Objective-C objects carry their own autolink metadata (`LC_LINKER_OPTION`), which is
+how the frameworks the Swift package imports — AVFoundation, AudioToolbox, CoreAudio,
+Foundation — arrive by themselves. Nothing does that for Rust objects, and CoreMIDI is
+reached only from Rust, through midir.
+
+Tauri's XcodeGen template links CoreGraphics, Metal, MetalKit, QuartzCore, Security, UIKit
+and WebKit, plus whatever `bundle.iOS.frameworks` names, so that is where the four this app
+needs now sit. Strictly only `CoreMIDI` has to be there; the other three are declared
+because the argument that they arrive by autolink is sound but unverifiable from this host,
+and a redundant `-framework` costs a load command while a missing one costs a build.
+
+**That list only reaches the project when the project is regenerated.** `tauri ios init`
+writes `project.yml`, and `build-ios.sh` deliberately does not re-run `init` over an
+existing tree — hand edits made in Xcode should survive an ordinary build. So after this
+change, `npx tauri ios init` (or `rm -rf src-tauri/gen/apple`) once.
+
+### What was verified
+
+- `cargo check --workspace --exclude unplugged --target aarch64-apple-ios` is clean with
+  the changed build script — on Linux, where it takes the "no `swift` toolchain" path, so
+  this proves the Rust, not the Swift.
+- The precedence rules behind both fixes were read rather than remembered:
+  `SwiftSDK.systemSwiftSDK` in swift-package-manager, and `IosConfig` plus the iOS
+  `project.yml` template in tauri at the versions in `Cargo.lock` (`tauri-utils` 2.9.3,
+  `tauri` 2.11.5). A `frameworks` entry with no extension renders as
+  `- sdk: <name>.framework`.
+
+### Not verified — needs the Mac
+
+Everything downstream of the manifest. This host has no Swift compiler, so the package's
+first iOS compile still has not happened: `UTType` is the error that was visible by
+reading, not evidence that it is the last one. In order, what remains to fail is the Swift
+sources' first iOS compile, then the Xcode link of the staticlib, then signing.
+
+### What a human should test on a Mac
+
+- [ ] `npm run build:ios`. Expect the Swift build to get past "Invalid manifest"; whatever
+      fails next is the deliverable.
+- [ ] If the link fails on `_MIDIClientCreate…` or another `_MIDI*` symbol, that is the
+      frameworks list not having reached the Xcode project: `npx tauri ios init`, then
+      build again.
+- [ ] `cargo build -p unplugged --lib --target aarch64-apple-ios` from a plain terminal.
+      It runs the same build script with Xcode nowhere near the environment, which is the
+      control for the `SDKROOT` change.
