@@ -24,21 +24,32 @@ const VELOCITY_LANE_MIN = 40;
 const MIN_GRID_HEIGHT = 96;
 
 /**
+ * The most of the roll's height the lane may take — a quarter of it.
+ *
+ * A fixed 72px is a quarter of a desktop roll and a third of a phone's, so the same
+ * number that reads as a footnote on one screen dominates the other. Velocity is an
+ * adjustment to notes that already exist; the grid is where they come from, and the
+ * grid is what should get the pixels when there are fewer of them.
+ */
+const VELOCITY_LANE_SHARE = 0.25;
+
+/**
  * How much of the roll's height the velocity lane may take.
  *
- * The lane is the first thing to give when the viewport is short. A phone lying down
- * leaves the roll about 110pt in total; 72 of them spent on velocity would leave no grid
- * to put notes on, and velocity is an adjustment you make to notes that already exist.
- * So it shrinks, and below the point where it would be too thin to aim at it goes
- * entirely — a lane you cannot drag is worse than no lane, because it still costs the
- * height.
+ * It is the first thing to give when the roll is short. A phone lying down leaves the
+ * roll about 110pt in total; 72 of them spent on velocity would leave no grid to put
+ * notes on. So it shrinks — to a smaller lane that is still a bar chart you can drag —
+ * and below the point where it would be too thin to aim at it goes entirely. A lane you
+ * cannot drag is worse than no lane, because it still costs the height.
  *
  * Everything that draws or hit-tests the lane reads this, so the two cannot end up
  * disagreeing about where the roll stops and the lane starts.
  */
 export function velocityLaneHeight(available: number): number {
-  if (available - VELOCITY_LANE_HEIGHT >= MIN_GRID_HEIGHT) return VELOCITY_LANE_HEIGHT;
-  if (available - VELOCITY_LANE_MIN >= MIN_GRID_HEIGHT) return VELOCITY_LANE_MIN;
+  const cap = available * VELOCITY_LANE_SHARE;
+  for (const lane of [VELOCITY_LANE_HEIGHT, VELOCITY_LANE_MIN]) {
+    if (lane <= cap && available - lane >= MIN_GRID_HEIGHT) return lane;
+  }
   return 0;
 }
 

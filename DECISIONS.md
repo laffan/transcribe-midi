@@ -1828,3 +1828,61 @@ Specifically at risk, in rough order of likelihood:
       their buttons clear the home indicator.
 - [ ] Scroll the inspector to its end and keep flicking; confirm the page behind it does
       not move.
+
+### The screen was loud, and it was loud in a specific way
+
+Reviewing the phone screenshots, the layout fit and still felt busy — so the next pass was
+about volume rather than geometry, and it applies at every width.
+
+**One label style was doing three jobs.** The uppercase, letterspaced, bold treatment was
+on section headings, on every field label, on the roll's control labels, and on the
+console's level column: sixteen of them on one screen. Emphasis that is applied to
+everything is not emphasis, it is just loudness — and the things that genuinely were
+headings had no way to stand out from the things that were captions. Uppercase now means
+*section* and means only that; a field label is quiet sentence case, and the console's
+level is lowercase because the colour of the rule down the entry's left edge was already
+carrying it.
+
+**Three readouts were stated twice.** The inspector carried the track name, the note count,
+the selection count and the instrument, each as a label above a value. The name and the
+count are the selected row of the track list a few inches away; the selection count is in
+the roll's own toolbar, beside the notes it counts. Repeating them did not make them
+clearer — it made the panel long enough that the things only it can tell you were below the
+fold. The instrument was the constant "Built-in sampler" under a note about an unbuilt
+phase; it returns when there is a choice to make. What is left is one quiet line, `ch 1 ·
+480 PPQ`, which is what nothing else shows. PPQ moved there out of the title bar, where it
+was debug information sitting in the app's primary chrome.
+
+**Repetition in the history was noise, not information.** Drawing five notes produced five
+rows reading "Insert note". Consecutive identical steps now fold into one row and a count.
+Undo still takes back one step, so a run of five shrinks to four rather than vanishing —
+the count is what makes that legible instead of surprising. Only consecutive runs fold; two
+bursts of drawing with an edit between them are two moments and stay two rows.
+
+**Two rules were drawn on the same line.** `.editor__bottom` had a top border, and so does
+every one of the three bars that can occupy its first row — the review and listening bars
+draw a 2px accent one. The container's is gone.
+
+**The velocity lane is now a share, not a number.** A fixed 72px is a quarter of a desktop
+roll and a third of a phone's, so the same number that reads as a footnote on one screen
+dominates the other. It takes at most a quarter of the roll's height, which on a phone
+means 40px and about 20% more grid.
+
+One thing was tried and reverted. Dropping the roll toolbar's control labels on a phone
+looked tidier in isolation and left two identical unlabelled sliders side by side — nothing
+about a slider says whether it zooms time or pitch. A control you have to experiment with
+is not tidier than a labelled one, only quieter about being unusable. The labels stayed and
+the standing hint went instead ("click to add · drag to select", on a device with nothing
+to click), which is what paid for them.
+
+The verification script grew a check out of this: a bar with `overflow: hidden` reports
+equal `scrollWidth` and `clientWidth` even when its flex children have shrunk into each
+other, so it now compares sibling rectangles. That is what caught the toolbar labels
+overlapping the sliders after the labels were restored.
+
+**Left alone deliberately.** The standing explanations in the transcription panel ("One note
+at a time. Chords are out of scope in this version…") and beside the project-tempo checkbox
+are three lines each and permanently on screen, which is the remaining prose weight in the
+inspector. They are also the only warning before you press Listen and get a confident
+transcription of a chord. Shortening them is an editorial decision about the app's voice
+rather than a layout one, so it is flagged rather than taken.

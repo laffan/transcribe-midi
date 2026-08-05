@@ -156,6 +156,15 @@ function audit([coarse, floor]) {
       if (el.scrollWidth > el.clientWidth + 1) {
         findings.push(`${sel} clips content: ${el.scrollWidth} > ${el.clientWidth}`);
       }
+      // Flex children shrink into each other rather than overflowing, so a bar can look
+      // the right width while its labels sit on top of its controls.
+      const kids = [...el.children].map((k) => k.getBoundingClientRect()).filter((r) => r.width);
+      for (let i = 1; i < kids.length; i += 1) {
+        if (kids[i].left < kids[i - 1].right - 0.5) {
+          findings.push(`${sel} children overlap at index ${i}`);
+          break;
+        }
+      }
     }
   }
 
@@ -272,7 +281,7 @@ const snapshot = () =>
 // of grid columns produces pixels identical to where it started. One note is an anchor.
 await page.locator(".roll__canvas").tap({ position: { x: 200, y: 160 } });
 await page.waitForTimeout(400);
-const notesBefore = await page.locator(".inspector__value.mono").nth(1).textContent();
+const notesBefore = await page.locator(".tracklist__count").first().textContent();
 
 const before = await snapshot();
 const zoomOf = () => page.locator('input[aria-label="Horizontal zoom"]').inputValue();
@@ -295,7 +304,7 @@ await touch("touchEnd", []);
 const zoomAfterPinch = await zoomOf();
 
 // --- one finger still edits, and two fingers still do not ---
-const notesAfterGestures = await page.locator(".inspector__value.mono").nth(1).textContent();
+const notesAfterGestures = await page.locator(".tracklist__count").first().textContent();
 
 const check = (name, ok, detail = "") => {
   if (!ok) failures += 1;

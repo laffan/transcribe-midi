@@ -544,7 +544,6 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
 
         <div className="spacer" />
 
-        <span className="editor__stat mono">{manifest.ppq} PPQ</span>
         {build && (
           <span
             className={`editor__stat editor__build mono ${build.dirty ? "editor__build--dirty" : ""}`}
@@ -661,31 +660,26 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
 
               <hr className="inspector__rule" />
 
-              <div className="field">
-                <span className="field__label">Track</span>
-                <div className="inspector__value">{track.name}</div>
-              </div>
+              {/*
+                What is left after saying each thing once.
 
-              <div className="inspector__grid">
-                <div className="field">
-                  <span className="field__label">Channel</span>
-                  <div className="inspector__value mono">{track.channel + 1}</div>
-                </div>
-                <div className="field">
-                  <span className="field__label">Notes</span>
-                  <div className="inspector__value mono">{track.notes.length}</div>
-                </div>
-              </div>
+                This panel used to carry the track name, the note count, the selection
+                count and the instrument, each as a label above a value. Three of the
+                four were already on screen: the name and the count are the selected row
+                of the track list a few inches up, and the selection count is in the
+                roll's own toolbar, right beside the notes it counts. Repeating them here
+                did not make them clearer, it made the panel long enough that the things
+                only it can tell you were below the fold.
 
-              <div className="field">
-                <span className="field__label">Selected</span>
-                <div className="inspector__value mono">{selection.length}</div>
-              </div>
+                The instrument was a constant — "Built-in sampler" — under a note about a
+                phase that has not happened. It comes back when there is a choice to make.
 
-              <div className="field">
-                <span className="field__label">Instrument</span>
-                <div className="inspector__value">Built-in sampler</div>
-                <span className="field__hint">AUv3 instruments arrive in Phase 9.</span>
+                Channel and PPQ are what nothing else shows: one decides where MIDI goes,
+                the other is the resolution every exported file inherits.
+              */}
+              <div className="inspector__facts mono">
+                <span>ch {track.channel + 1}</span>
+                <span>{manifest.ppq} PPQ</span>
               </div>
 
               <hr className="inspector__rule" />

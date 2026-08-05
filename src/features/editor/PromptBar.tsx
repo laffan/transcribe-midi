@@ -95,10 +95,10 @@ export function PromptBar({
   if (needsSetup) {
     return (
       <div className="promptbar promptbar--setup">
-        <span className="promptbar__hint">
-          Add an Anthropic API key to describe edits in words. It is stored in the Keychain
-          and every request is made by Rust — the key is never handed to the interface.
-        </span>
+        {/* One line. Where the key is kept and who makes the request is a real
+            reassurance, but it is three lines of prose in a control bar and it is
+            already said in Settings, next to the field you type the key into. */}
+        <span className="promptbar__hint">Add an API key to describe edits in words.</span>
         <button className="btn" onClick={onOpenSettings}>
           Set up AI
         </button>

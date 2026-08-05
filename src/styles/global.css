@@ -233,12 +233,17 @@ select.input {
   gap: var(--space-1);
 }
 
+/*
+ * A field label names the value under it and nothing more, so it is the quietest text on
+ * a panel. It used to be uppercase and letterspaced — the same treatment as a section
+ * heading — which was applied to roughly thirty labels at once. When a label, a heading
+ * and a log level all shout equally, none of them is emphasis any more; the screen just
+ * reads as loud. Uppercase now means *section*, and it means only that.
+ */
 .field__label {
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-normal);
   color: var(--text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .field__error {

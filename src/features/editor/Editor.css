@@ -97,12 +97,14 @@
   flex-shrink: 0;
 }
 
+/* Uppercase is now the only thing that marks a section heading, so it does not also
+   need to be bold and widely tracked to be found. */
 .editor__panel-title {
   font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-medium);
   color: var(--text-2);
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
 }
 
 .editor__roll {
@@ -241,16 +243,23 @@
   padding: var(--space-3);
 }
 
-.inspector__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
-
 .inspector__value {
   font-size: var(--text-sm);
   color: var(--text-0);
   padding: var(--space-1) 0;
+}
+
+/*
+ * Two constants about the open track, on one line. A label above each would be two more
+ * rows to say what "ch 1" and "480 PPQ" already say — the label-above-value form earns
+ * its height when the value is something you change, and neither of these is.
+ */
+.inspector__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-2);
 }
 
 .inspector__rule {
@@ -278,10 +287,15 @@
  * height at every width. Worth knowing if a layout memory disagrees with the current
  * proportions: the bars are the sizes their tokens say now.)
  */
+/*
+ * No border of its own: all three things that can occupy the first row — the prompt bar,
+ * the review bar, the listening bar — draw their own top edge, and the review and
+ * listening bars draw a 2px accent one. A rule here put a second line directly under
+ * every one of them.
+ */
 .editor__bottom {
   display: grid;
   grid-template-rows: auto var(--h-transport) calc(var(--h-keyboard) + var(--safe-bottom));
-  border-top: 1px solid var(--border);
   background: var(--bg-1);
   flex-shrink: 0;
 }
