@@ -58,7 +58,9 @@
   flex-shrink: 0;
 }
 
-@media (max-width: 720px) {
+/* The BPM caption and the time signature are labels for values that are legible without
+   them: a field containing 120 next to a transport is the tempo. */
+@media (max-width: 720px), (max-height: 460px) and (pointer: coarse) {
   .transport__sig,
   .transport__label {
     display: none;
@@ -67,6 +69,96 @@
   .transport__position {
     min-width: 88px;
     font-size: var(--text-md);
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * Eleven controls, 390pt of width and 44pt targets: the bar scrolls sideways on a phone
+ * and there is no arrangement of it that does not. What can be decided is *what is
+ * already on screen when it stops scrolling*, and flex `order` decides that without the
+ * markup having to know it is on a phone.
+ *
+ * The order is: the four things that make sound (start, play, record, listen), then the
+ * position readout they move, then Save — because an unsaved dot you cannot reach is
+ * worse than a Panic button you have to scroll to. Loop, Click, Undo, Redo, tempo and
+ * Panic follow, in the order you would go looking for them.
+ *
+ * Lying down is no different in kind. 852pt sounds like plenty until eleven controls at
+ * 44pt apiece are laid end to end, which comes to about 950 — so the strip still
+ * scrolls, and what is on screen when it stops still has to be chosen.
+ */
+@media (max-width: 430px), (max-height: 460px) and (pointer: coarse) {
+  .transport {
+    gap: var(--space-2);
+    padding: 0;
+    /* A flick that runs out of transport must not drag the page along with it. */
+    overscroll-behavior-x: contain;
+  }
+
+  /*
+   * Pinned to the left edge, so play and record are under the thumb whatever the strip
+   * is scrolled to — stopping the transport should never require finding it first.
+   * `align-self: stretch` matters: the group's own background is what hides the
+   * scrolled-past controls behind it, and a background 44px tall in a 52px bar would
+   * leave them showing in the gap.
+   */
+  .transport__group--primary {
+    order: 0;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    align-self: stretch;
+    align-items: center;
+    padding-right: var(--space-2);
+    background: var(--bg-1);
+  }
+
+  .transport__position {
+    order: 1;
+    min-width: 76px;
+    padding: 0;
+    font-size: var(--text-md);
+  }
+
+  /* Ahead of the rest: an unsaved dot you have to go looking for is worse than a
+     Panic button you have to go looking for. */
+  .transport__save {
+    order: 2;
+  }
+
+  .transport__group--toggles {
+    order: 3;
+  }
+
+  .transport__group--history {
+    order: 4;
+  }
+
+  .transport__tempo {
+    order: 5;
+  }
+
+  .transport__panic {
+    order: 6;
+  }
+
+  /* A flex spacer inside a strip that already overflows only adds to the overflow. */
+  .transport .spacer {
+    display: none;
+  }
+
+  .transport__tempo-input {
+    width: 68px;
+  }
+}
+
+/* Lying down there is width to spare, so the bar stops scrolling — but it is only
+   50px tall, and a 44pt control has to fit inside it without vertical padding. */
+@media (max-height: 460px) and (pointer: coarse) {
+  .transport {
+    gap: var(--space-2);
   }
 }
 

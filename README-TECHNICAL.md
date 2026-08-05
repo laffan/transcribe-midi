@@ -33,6 +33,10 @@ src-tauri/                   Tauri commands. Thin: parse args, call a crate, map
 src/                         React frontend.
   lib/api.ts                 The ONLY place the frontend talks to the backend.
   features/<name>/           One directory per feature; components + css side by side.
+  styles/tokens.css          Colour, spacing, type, chrome heights, safe-area insets,
+                             and the breakpoint ladder every media query in the app uses.
+  styles/touch.css           The finger layer: what changes when the pointer is coarse,
+                             independently of how wide the screen is.
 scripts/                     install-plugin.sh / verify-plugin.sh — build, install,
                              register and interrogate the plugin.
 ```
@@ -97,7 +101,12 @@ you touch one substantially, split it as part of the change:
 | `crates/unplugged-core/src/music.rs` | ~810 | scales/keys vs. roman-numeral parsing vs. tests |
 | `crates/unplugged-transcribe/src/lib.rs` | ~770 | segmentation vs. API vs. tests |
 | `crates/unplugged-plugin/src/lib.rs` | ~765 | plugin state vs. C ABI vs. tests |
-| `src/features/editor/PianoRoll.tsx` | ~750 | grid math + interaction hooks out |
+
+`src/features/editor/PianoRoll.tsx` came off this list in Phase 11: adding touch gestures
+pushed it to 810, so it split along the seams the register had already named — a
+subcomponent (`RollToolbar.tsx`) and two interaction hooks (`rollGestures.ts`,
+`useRollShortcuts.ts`). It is 672 now. That is the intended shape of the rule working: the
+register is a list of files waiting for a reason to be split, not a list of exemptions.
 
 ## Coding standards
 
@@ -138,6 +147,21 @@ component per file, hooks in `useX` form. No abbreviations that save three chara
 directly (this is also what keeps the browser mock working). Styling is hand-rolled CSS
 against the design tokens in `src/styles/tokens.css`; no CSS-in-JS, no UI framework.
 State that belongs to a feature stays in that feature's directory.
+
+**Responsive rules answer two separate questions.** *Width* decides what the layout is and
+uses one of the five rungs written out in `tokens.css` — never a new number. *Pointer*
+decides how big things have to be and whether hover means anything, and keys off
+`pointer: coarse` / `hover: none` at any width. Keeping them apart is what stops an iPad
+at 1024px getting cursor-sized hit targets and a 400px-wide desktop window getting
+finger-sized ones. Every `:hover` rule belongs inside `@media (hover: hover)`: iOS
+synthesises a hover on tap and leaves it there, so an unguarded one reads as a stuck
+control. A phone rule lives in the same file as the thing it restyles; only what is
+genuinely cross-cutting goes in `touch.css`.
+
+**Insets go through the `--safe-*` variables**, never a bare `env(safe-area-inset-*)`. A
+fixed grid track has to fold the inset into its own height, and repeating the `env()`
+fallback at every such site is how two of them drift apart. It also means the whole phone
+layout can be checked in a desktop browser by overriding four variables.
 
 **Dependencies.** Adding one is a decision, not a reflex: it must be verified working on
 both Apple targets, and recorded in DECISIONS.md with the alternatives considered. The DSP
@@ -206,6 +230,22 @@ breakage without a Mac; they do not catch Swift, which only a Mac build verifies
 which is why every Swift-touching change ends with "run `scripts/install-plugin.sh
 --debug` and send the errors" rather than a claim of success.
 
+For anything that touches layout, also:
+
+```bash
+npm run preview -- --port 4173 &                    # serve the build
+npm install --no-save playwright-core               # not a dependency; see the script
+node scripts/check-phone-layout.mjs
+```
+
+It drives the app at six screen sizes with each device's real safe-area insets simulated,
+and asserts what a phone actually breaks on: horizontal overflow, controls under the
+status bar or home indicator, hit targets below 44pt, text fields under 16px (the
+threshold at which WKWebView zooms in on focus and never zooms back out), and bars whose
+`overflow: hidden` is quietly eating a control. Then it drives real multi-touch at the
+piano roll. It is not a substitute for a device — see the "Not verified" list in
+DECISIONS.md Phase 11 — but every failure it reports is real.
+
 On a Mac:
 
 ```bash
@@ -226,6 +266,11 @@ undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead · `⌘Q
 `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note · `A`–`L` +
 `W/E/T/Y/U` on-screen keys · `Z`/`X` octave down/up · `⌘`-scroll zoom · `⇧`-scroll pan ·
 click empty grid draws, drag marquee-selects.
+
+On a touchscreen: one finger does what the mouse does — draw, select, drag, resize, scrub.
+**Two fingers pan the roll, and moving them apart or together zooms time.** That is the
+only way to navigate the roll without a wheel, so it is the first thing to try if the grid
+appears to be stuck where it opened.
 
 ## Working agreements
 

@@ -547,7 +547,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
         <span className="editor__stat mono">{manifest.ppq} PPQ</span>
         {build && (
           <span
-            className={`editor__stat mono ${build.dirty ? "editor__build--dirty" : ""}`}
+            className={`editor__stat editor__build mono ${build.dirty ? "editor__build--dirty" : ""}`}
             title={`${build.version} · ${build.commit}${build.dirty ? " (modified)" : ""} · ${build.profile} · built ${build.built_at}`}
           >
             {build.version} {build.commit}

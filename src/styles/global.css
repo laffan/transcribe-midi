@@ -19,6 +19,20 @@ body,
   height: 100%;
 }
 
+/*
+ * On a phone `100%` resolves against the *large* viewport, which on a browser preview
+ * is taller than what you can see while the URL bar is out — the transport ends up
+ * under it. `dvh` tracks the visible box instead. Guarded because the build targets
+ * Safari 15 and `dvh` only landed in 15.4; below that `100%` is what there is.
+ */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   font-family: var(--font-ui);
   font-size: var(--text-md);
@@ -26,6 +40,10 @@ body {
   color: var(--text-0);
   background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
+  /* WKWebView inflates text in tall narrow blocks unless told the layout is deliberate,
+     which would break every fixed-height bar in the editor. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   /* This is an app, not a document: no rubber-banding, no text selection by default. */
   overscroll-behavior: none;
   user-select: none;
@@ -71,8 +89,21 @@ textarea {
   border-radius: 5px;
   border: 2px solid var(--bg-0);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-2);
+@media (hover: hover) {
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-2);
+  }
+}
+
+/*
+ * iOS draws its own transient scrollbars and gives a styled one no width, so a pane
+ * that reserves 10px for a track it will never paint loses 10px of content instead.
+ */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
 }
 
 /* --------------------------------------------------------------- button -- */
@@ -83,7 +114,7 @@ textarea {
   justify-content: center;
   gap: var(--space-2);
   padding: 0 var(--space-3);
-  height: 30px;
+  height: var(--h-control);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-3);
@@ -95,9 +126,32 @@ textarea {
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-.btn:hover:not(:disabled) {
-  background: var(--border);
-  border-color: var(--text-2);
+/*
+ * Every hover rule in the app is behind this guard. iOS has no hover, so it synthesises
+ * one on tap and then leaves it applied until you touch something else — a tapped
+ * button stays lit as though it were still under the cursor, which reads as "stuck" on
+ * a transport where lit means *playing*. `:active` is the touch feedback that works.
+ */
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: var(--border);
+    border-color: var(--text-2);
+  }
+
+  .btn--primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
+  .btn--danger:hover:not(:disabled) {
+    background: var(--danger-muted);
+  }
+
+  .btn--ghost:hover:not(:disabled) {
+    background: var(--bg-3);
+    color: var(--text-0);
+    border-color: transparent;
+  }
 }
 
 .btn:active:not(:disabled) {
@@ -114,18 +168,11 @@ textarea {
   border-color: var(--accent);
   color: #fff;
 }
-.btn--primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
 
 .btn--danger {
   background: transparent;
   border-color: var(--danger);
   color: var(--danger);
-}
-.btn--danger:hover:not(:disabled) {
-  background: var(--danger-muted);
 }
 
 .btn--ghost {
@@ -133,19 +180,14 @@ textarea {
   border-color: transparent;
   color: var(--text-1);
 }
-.btn--ghost:hover:not(:disabled) {
-  background: var(--bg-3);
-  color: var(--text-0);
-  border-color: transparent;
-}
 
 .btn--icon {
-  width: 30px;
+  width: var(--h-control);
   padding: 0;
 }
 
 .btn--lg {
-  height: 36px;
+  height: calc(var(--h-control) + 6px);
   padding: 0 var(--space-4);
   font-size: var(--text-md);
 }
@@ -154,7 +196,7 @@ textarea {
 
 .input {
   width: 100%;
-  height: 30px;
+  height: var(--h-control);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);

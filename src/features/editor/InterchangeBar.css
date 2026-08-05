@@ -31,11 +31,41 @@
   transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 
-.interchange__drag:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+@media (hover: hover) {
+  .interchange__drag:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
 
 .interchange__drag:active {
   cursor: grabbing;
+}
+
+/*
+ * There is nothing to drag a track *to* on a phone — no Finder, no second window, no
+ * desktop. The handle is offered only where the platform reports that it can start a
+ * native drag (see `capabilities.drag_out` in InterchangeBar), but a coarse pointer is
+ * the second half of that question: an iPad can drag and an iPhone cannot, and neither
+ * of them can do it from a control sized for a cursor. Where it does show, it gets a
+ * target rather than a strip of dashed border.
+ */
+@media (pointer: coarse) {
+  .interchange__drag {
+    min-height: var(--h-control);
+    cursor: default;
+  }
+
+  .interchange__row .btn {
+    /* Export/Import/Share side by side: three 44pt buttons in a 296pt inspector fit,
+       three that also try to hold their labels do not. */
+    flex: 1 1 30%;
+    padding: 0 var(--space-2);
+  }
+}
+
+@media (max-width: 430px) {
+  .interchange__drag {
+    display: none;
+  }
 }

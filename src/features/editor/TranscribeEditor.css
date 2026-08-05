@@ -13,11 +13,14 @@
   min-width: 0;
 }
 
+/* Full-bleed and `position: fixed`, so it owns every inset itself — there is no chrome
+   underneath it doing the job. */
 .tedit__head {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  padding: calc(var(--space-2) + var(--safe-top)) calc(var(--space-3) + var(--safe-right))
+    var(--space-2) calc(var(--space-3) + var(--safe-left));
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
   min-width: 0;
@@ -55,7 +58,8 @@
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) calc(var(--space-3) + var(--safe-right))
+    calc(var(--space-2) + var(--safe-bottom)) calc(var(--space-3) + var(--safe-left));
   border-top: 1px solid var(--border);
   background: var(--bg-1);
   min-width: 0;
@@ -85,4 +89,55 @@
 .tedit__controls .field__hint {
   flex: 1 1 220px;
   min-width: 0;
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * This is a mode that takes the whole screen, which is the right shape for a phone
+ * already — the waveform gets everything the controls do not. Below it, three buttons
+ * and two settings have to share 390pt: the buttons take a row of their own so they are
+ * full-size targets, and the settings take the row above.
+ *
+ * The paragraph of instructions goes. It is three lines on a phone, it describes a
+ * gesture vocabulary ("click", "drag its edges") that has been replaced by a different
+ * one, and it would push the buttons off the bottom of the screen to say so.
+ */
+@media (max-width: 430px) {
+  .tedit__controls {
+    gap: var(--space-2);
+    padding-left: calc(var(--space-2) + var(--safe-left));
+    padding-right: calc(var(--space-2) + var(--safe-right));
+  }
+
+  .tedit__controls .field__hint,
+  .tedit__controls .spacer {
+    display: none;
+  }
+
+  .tedit__control,
+  .tedit__check {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .tedit__check {
+    white-space: normal;
+  }
+
+  .tedit__controls .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    line-height: var(--h-control);
+    text-align: center;
+  }
+
+  /* The title says what this is; the stat line repeats the numbers already drawn on the
+     waveform, and only one of the two fits beside a close button. */
+  .tedit__stat {
+    display: none;
+  }
 }

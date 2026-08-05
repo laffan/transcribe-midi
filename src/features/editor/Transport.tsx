@@ -77,7 +77,7 @@ export function Transport({
 }: TransportProps) {
   return (
     <div className="transport">
-      <div className="transport__group">
+      <div className="transport__group transport__group--primary">
         <button
           className="btn btn--icon"
           onClick={onReturnToZero}
@@ -122,7 +122,7 @@ export function Transport({
         </button>
       </div>
 
-      <div className="transport__group">
+      <div className="transport__group transport__group--toggles">
         <button
           className={`btn btn--ghost ${loopRegion ? "btn--active" : ""}`}
           onClick={onToggleLoop}
@@ -172,7 +172,7 @@ export function Transport({
 
       <div className="spacer" />
 
-      <div className="transport__group">
+      <div className="transport__group transport__group--history">
         <button
           className="btn btn--ghost"
           onClick={onUndo}
@@ -192,14 +192,18 @@ export function Transport({
       </div>
 
       <button
-        className="btn btn--ghost"
+        className="btn btn--ghost transport__panic"
         onClick={onPanic}
         title="Silence all notes — use if a note gets stuck"
       >
         Panic
       </button>
 
-      <button className={`btn ${dirty ? "btn--primary" : ""}`} onClick={onSave} disabled={!dirty}>
+      <button
+        className={`btn transport__save ${dirty ? "btn--primary" : ""}`}
+        onClick={onSave}
+        disabled={!dirty}
+      >
         {dirty ? "Save" : "Saved"}
       </button>
     </div>

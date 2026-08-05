@@ -14,6 +14,34 @@ export const PITCH_COUNT = MAX_PITCH - MIN_PITCH + 1;
 /** Pixels within which a pointer counts as grabbing a note's right edge to resize. */
 export const RESIZE_HANDLE_PX = 6;
 
+/** Height of the velocity lane beneath the roll when there is room for it. */
+export const VELOCITY_LANE_HEIGHT = 72;
+
+/** The least it can be and still be a bar chart you can drag the top of. */
+const VELOCITY_LANE_MIN = 40;
+
+/** Below this the grid is not enough semitones to place a note against. */
+const MIN_GRID_HEIGHT = 96;
+
+/**
+ * How much of the roll's height the velocity lane may take.
+ *
+ * The lane is the first thing to give when the viewport is short. A phone lying down
+ * leaves the roll about 110pt in total; 72 of them spent on velocity would leave no grid
+ * to put notes on, and velocity is an adjustment you make to notes that already exist.
+ * So it shrinks, and below the point where it would be too thin to aim at it goes
+ * entirely — a lane you cannot drag is worse than no lane, because it still costs the
+ * height.
+ *
+ * Everything that draws or hit-tests the lane reads this, so the two cannot end up
+ * disagreeing about where the roll stops and the lane starts.
+ */
+export function velocityLaneHeight(available: number): number {
+  if (available - VELOCITY_LANE_HEIGHT >= MIN_GRID_HEIGHT) return VELOCITY_LANE_HEIGHT;
+  if (available - VELOCITY_LANE_MIN >= MIN_GRID_HEIGHT) return VELOCITY_LANE_MIN;
+  return 0;
+}
+
 export interface Viewport {
   /** Horizontal zoom. */
   pxPerTick: number;

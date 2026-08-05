@@ -63,7 +63,73 @@
   display: block;
   position: absolute;
   inset: 0;
-  /* The canvas handles its own scroll and zoom via the wheel handler, so the browser
-     must not also pan or pinch it. */
+  /* The canvas handles its own scroll and zoom — the wheel handler with a cursor, the
+     two-finger gesture with a finger — so the browser must not also pan or pinch it. */
   touch-action: none;
 }
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * The toolbar carries a grid picker, two sliders and a hint across ~330pt. It already
+ * clips rather than scrolls, so at phone width the last control simply would not exist.
+ * The labels go instead: "Grid" beside a menu reading 1/16 is saying it twice, and the
+ * sliders are legible as sliders. The hint goes too — it says "click", and there is
+ * nothing here to click with.
+ */
+@media (max-width: 430px), (max-height: 460px) and (pointer: coarse) {
+  .roll__toolbar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  .roll__control-label,
+  .roll__hint {
+    display: none;
+  }
+
+  /* The selection count is the one thing in the hint slot worth the width, so it keeps
+     its place while the standing instruction does not. */
+  .roll__hint--selection {
+    display: block;
+    font-size: var(--text-xs);
+    white-space: nowrap;
+  }
+
+  .roll__select {
+    width: 84px;
+  }
+
+  /* Two sliders sharing what is left, rather than one at its ideal width and one
+     pushed off the edge. */
+  .roll__range {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 56px;
+  }
+
+  .roll__control {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .roll__control:first-child {
+    flex: 0 0 auto;
+  }
+}
+
+/*
+ * Lying down, the toolbar is competing with the grid for about 130pt. The sliders keep
+ * a grab zone you can hit but stop asking for the full 40 — this bar sits directly
+ * above the notes, and every point it takes is a semitone fewer on screen.
+ */
+@media (max-height: 460px) and (pointer: coarse) {
+  .roll .roll__select {
+    height: 34px;
+  }
+
+  .roll .roll__range {
+    height: 34px;
+  }
+}
+

@@ -16,6 +16,24 @@
   flex-shrink: 0;
 }
 
+/*
+ * A column of two 44pt buttons and a label between them is 106pt, which is taller than
+ * the board they sit beside — and a flex column shrinks its children to fit rather than
+ * overflowing, so at the full target size they silently come out at 32. 40 is the size
+ * that fits, and it is the size they stay: shrinking a control below the floor without
+ * saying so is how a keyboard ends up with two buttons you cannot press.
+ *
+ * These matter more on a phone than anywhere else — with one octave on screen, they are
+ * the only way to reach the rest of the range.
+ */
+@media (pointer: coarse) {
+  .keys__controls .btn {
+    height: 40px;
+    width: 40px;
+    flex-shrink: 0;
+  }
+}
+
 .keys__octave {
   font-size: var(--text-xs);
   color: var(--text-2);
@@ -47,8 +65,12 @@
   transition: background var(--transition-fast);
 }
 
-.keys__white:hover {
-  background: #cfd4e0;
+/* Guarded: iOS leaves a synthesised hover on the last key touched, so without this a
+   key you released stays shaded as though it were still down. */
+@media (hover: hover) {
+  .keys__white:hover {
+    background: #cfd4e0;
+  }
 }
 
 .keys__white--on {
@@ -72,8 +94,10 @@
   transition: background var(--transition-fast);
 }
 
-.keys__black:hover {
-  background: #2c313c;
+@media (hover: hover) {
+  .keys__black:hover {
+    background: #2c313c;
+  }
 }
 
 .keys__black--on {
@@ -97,5 +121,63 @@
 @media (max-width: 640px) {
   .keys__meta {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * The board drops to one octave in the component (see COMPACT_SEMITONES) because no
+ * amount of styling makes a 22pt key aimable. What is left for CSS is giving the eight
+ * white keys every point of width there is, and making the octave buttons — now the
+ * only way to reach the rest of the range — a real target rather than a 30px stub.
+ */
+@media (max-width: 430px) {
+  .keys {
+    gap: var(--space-2);
+    padding: 0;
+  }
+
+  .keys__board {
+    /* Keys read as keys when they are taller than they are wide; the roll above has
+       nothing to gain from the 2px this gives back. */
+    gap: 2px;
+  }
+
+  .keys__white {
+    font-size: 10px;
+    padding-bottom: var(--space-2);
+  }
+
+  .keys__black {
+    height: 58%;
+  }
+
+  /* The label sits between the two buttons and is the readout for both. */
+  .keys__octave {
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/*
+ * Lying down the board is ~72px tall, and a column of two 44pt buttons with a label
+ * between them is 110px — taller than the keyboard it is attached to. The controls lie
+ * down with the phone.
+ */
+@media (max-height: 460px) and (pointer: coarse) {
+  .keys {
+    gap: var(--space-2);
+    padding: 0;
+  }
+
+  .keys__controls {
+    flex-direction: row;
+    gap: var(--space-1);
+  }
+
+  .keys__white {
+    font-size: 9px;
+    padding-bottom: 2px;
   }
 }

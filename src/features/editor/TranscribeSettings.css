@@ -118,3 +118,27 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* ---------------------------------------------------------------- phone -- */
+
+/*
+ * A checkbox with a two-line explanation beside it is a target the size of the
+ * checkbox. The whole label is the target — it already is, semantically; this makes it
+ * one to the finger as well.
+ */
+@media (pointer: coarse) {
+  .transcribe__check {
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) 0;
+    min-height: var(--h-control);
+  }
+
+  .transcribe__check input {
+    margin-top: 0;
+  }
+
+  .transcribe__actions .btn {
+    flex: 1 1 auto;
+  }
+}

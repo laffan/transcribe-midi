@@ -1588,3 +1588,243 @@ Nothing in `plugin/` has been compiled. Specifically at risk, in rough order of 
 - [ ] Save the Logic project, reopen it, confirm the same Unplugged project is selected.
 - [ ] Delete that project in the app, reopen the Logic session, confirm it loads with
       nothing selected rather than failing.
+
+---
+
+## Phase 11 — the phone
+
+The app has always claimed iOS as a target and has had a handful of `max-width` media
+queries since Phase 1, added while checking that nothing overflowed at 390px. Nothing
+overflowing is not the same as making sense. This pass takes the position that a phone is
+a platform the UI has to be designed for rather than a narrow window it has to survive,
+and works through every surface on that basis.
+
+### The two axes are width and pointer, and they are not the same question
+
+The existing queries were all widths, which conflates "the screen is narrow" with "the
+input is a finger". They are different, and each has cases the other gets wrong: an iPad
+at 1024px needs 44pt targets and no hover, and a 400px-wide desktop window needs neither.
+Conflating them is how you end up with a resized window that suddenly has chunky buttons,
+or a tablet whose delete buttons only appear on a hover it will never receive.
+
+So the ladder in `styles/tokens.css` is width-only and decides *layout*, and
+`pointer: coarse` / `hover: none` decide *size and interaction*, orthogonally. The five
+width rungs are written out in that file with the reasoning for each; the two phone rungs
+are 430px wide (the widest iPhone standing up) and 460px tall paired with a coarse pointer
+(any iPhone lying down, and no iPad, whose shortest landscape is 768pt).
+
+### Safe areas were declared and never used
+
+`index.html` has had `viewport-fit=cover` from the start, which is what tells iOS to hand
+the app the whole screen — including the strip under the Dynamic Island and the one the
+home indicator lives in. Nothing in the app read `env(safe-area-inset-*)`, so the title bar
+would have shipped under the status bar and the bottom row of piano keys under the home
+indicator, where the system's swipe-up gesture also lives.
+
+Every inset is read through a `--safe-*` variable rather than calling `env()` at each site.
+The reason is that a fixed grid track has to fold the inset into its own height —
+`calc(var(--h-titlebar) + var(--safe-top))` — and spelling out the `env()` fallback again
+at each such site is how two of them end up disagreeing. It also has a happy side effect:
+the insets can be simulated in a desktop browser by overriding four variables, which is how
+the layout was checked at iPhone geometries on a machine with no iPhone.
+
+One case needed thought. The home indicator sits over whichever row is *last*, and which
+row that is changes when the console opens. Both candidates take the inset as their own
+padding and grow their own track by the same amount, so the surface meeting the bottom of
+the screen is always the one whose background belongs there.
+
+### Sticky hover is a bug on a touchscreen, so hover is now conditional
+
+iOS has no hover, so it synthesises one on tap and leaves it applied until you touch
+something else. A tapped transport button stays lit as though it were still under a cursor
+— in a bar where lit means *playing*, that reads as the app having got stuck. Every
+`:hover` rule in the app is now inside `@media (hover: hover)`, wrapped at the source
+rather than undone in a later layer, so a new hover rule that forgets the guard is visible
+in the file it was added to. Where hover was the only feedback, `:active` replaces it.
+
+The two rows that *reveal* their actions on hover — the track list and the project list —
+pin them visible on a coarse pointer. They already did so below 640px; keying it on the
+pointer as well is what gets it onto an iPad at full width.
+
+### 44pt is a chrome dimension, not a style
+
+Raising the control height to Apple's floor is one line, but a 44px control centred in a
+40px bar overflows it — which is exactly what happened: the Settings gear came out two
+points above the status bar on an iPad. The two numbers are one decision, so `--h-control`
+lives in `tokens.css` beside the bar heights and every rung that changes a bar height
+changes it knowing what has to fit inside.
+
+The deliberate exception is phone landscape, where the compact controls are 34px. On a
+393pt-tall screen, holding everything to 44 leaves the roll nothing; 34 is still a
+deliberate press, and those controls are wide even where they are not tall.
+
+### Bars the tokens had been lying about
+
+`.editor__bottom` declared two grid rows and has three children. The prompt bar was
+therefore sized by `--h-transport`, the transport by `--h-keyboard` — about twice its
+intended height, at every width since it was written — and the keyboard by an implicit
+auto row. It is invisible at desktop scale, where the result is merely roomy. It is not
+invisible on a phone, where it was the difference between a layout that fits and one that
+does not, and it made the height budget impossible to reason about because the tokens did
+not describe the bars they were named for. Three rows now. The proportions of the bottom
+chrome change on every platform as a result, and they change to what the tokens always
+said.
+
+### On a phone the keyboard is one octave, and that is not a style
+
+Two octaves is fifteen white keys. Across the ~330pt a phone has left after the octave
+controls that is 22pt a key, with the black keys on top of them 14pt wide — a third of what
+a fingertip can aim at, so every press is a coin toss between two semitones. No amount of
+styling fixes a key that is narrower than the finger pressing it, so the component asks
+the media query directly (`lib/useMediaQuery.ts`) and renders twelve semitones instead of
+twenty-four. A white key comes out at ~40pt. The octave buttons beside it, which matter far
+more once only one octave is on screen, are sized to match.
+
+That hook is deliberately the exception rather than a new habit: layout belongs in CSS, and
+it exists for the cases where the markup itself is wrong for the device rather than its
+presentation.
+
+### Lying down, the on-screen keys stand down
+
+A phone on its side has 393pt of height. The title bar, prompt bar and transport are 152 of
+it before anything is drawn, and the keyboard wants another 97 with the home indicator's
+strip — leaving the piano roll under 150pt to hold a toolbar, a ruler and some notes. The
+result is a roll you cannot read above a keyboard you can barely play.
+
+So the two orientations divide the work: **lying down is for looking at the notes, standing
+up is for playing them.** In landscape the inspector comes back beside the roll (stacking
+is the right answer to *narrow* and the wrong answer to *short* — it spends the scarce axis
+to save the plentiful one), the track list becomes a horizontal strip of tabs, and the
+keyboard is hidden. The roll gets ~112pt of canvas instead of nothing.
+
+**This is the weakest decision in the pass and the one most likely to be wrong.** Hiding a
+feature by orientation is a real cost, and the honest fix is a keyboard you can collapse and
+restore in either orientation — which is a control the editor does not have, and a UI
+addition rather than a style. It is the first thing to build on top of this.
+
+### The roll could not be navigated with a finger at all
+
+Not a styling problem, but it made the styling pointless: the canvas sets
+`touch-action: none` so the browser will not pan it, zoom is ⌘-scroll and pan is
+⇧-scroll, and every single pointer is already spoken for by drawing, selecting, dragging
+and scrubbing. A phone user could see whichever bars and pitches the roll happened to open
+on and reach no others.
+
+Two fingers now pan, and moving them apart or together zooms time about the point between
+them — the same anchoring rule the wheel handler uses, so the two feel like one behaviour.
+The maths is in `rollGestures.ts` with no React or canvas in it, and the wheel handler moved
+in beside it: they are one behaviour with two input devices and they have to agree.
+
+Three things were deliberate. It branches on *pointer count*, never on pointer type — a
+two-finger gesture is impossible with a mouse, so the desktop path is untouched. It measures
+from the start of the gesture rather than frame to frame, because an incremental version
+accumulates its own rounding and creeps under a finger that is holding still. And zoom is
+horizontal only: a gesture that changed the semitone height too would make every pan a
+small accidental zoom in whichever axis the fingers were less careful about.
+
+A second finger landing mid-drag cancels whatever the first was doing and any edit it
+already made *stands*, one undo away. The alternative is a pinch that silently reverts a
+drag you meant to keep.
+
+### The velocity lane yields before the grid does
+
+`VELOCITY_LANE_HEIGHT` was a flat 72px against a canvas floor of 160px, so on a short
+screen the canvas was styled taller than its box and the bottom — the lane — was clipped
+away rather than shrunk. It is now a function of the available height in
+`pianoRollGeometry.ts`: full size where there is room, 40px where there is not, and gone
+below that. A lane too thin to aim at is worse than no lane, because it still costs the
+height. Velocity is an adjustment to notes that already exist; the grid is where they come
+from.
+
+### The 700-line rule
+
+`PianoRoll.tsx` was on the debt register at ~750 and the gesture work pushed it to 810, so
+it split along the two seams the register already named: `RollToolbar.tsx` (a subcomponent),
+`rollGestures.ts` and `useRollShortcuts.ts` (interaction hooks). It is 672 now. `Editor.css`
+crossed 650 on the way and shed `ConsolePanel.css`, which is the console's own file beside
+the component that was already its own.
+
+### What was verified, and how
+
+Automated, on this Linux host:
+
+- **285 Rust tests** pass and clippy is clean, on the pure crates. The Tauri crate cannot
+  build here — `gdk-3.0` is not installed — which is why the README's verification list
+  excludes it. No Rust was touched in this pass; these are regression guards.
+- `cargo check --workspace --exclude unplugged` against **both** `aarch64-apple-darwin` and
+  `aarch64-apple-ios` — clean.
+- `tsc --noEmit && vite build` — clean.
+- A headless-Chromium sweep at **iPhone SE, 16 Pro and 16 Pro Max portrait, 16 Pro
+  landscape, iPad portrait and desktop**, with each device's real safe-area insets
+  simulated through the `--safe-*` variables. It asserts: no horizontal overflow; no
+  control in the fixed chrome under the status bar or the home indicator; no hit target in
+  the chrome below 44pt (34 in phone landscape, per the exception above); no text field
+  under 16px, which is the threshold at which WKWebView zooms the page in on focus and
+  never zooms back out; and no bar with `overflow: hidden` silently clipping a control out
+  of existence. Clean at all six.
+- Multi-touch driven through CDP at the real canvas: a two-finger pan moves the roll and
+  leaves the zoom alone, a pinch triples it, one finger still draws a note, and no
+  two-finger gesture draws a stray one.
+
+That sweep found and fixed six real defects, all of which were invisible at desktop width:
+the three-children-two-rows grid above, the title-bar overflow on any coarse pointer, a
+piano roll with **zero** height in landscape, the octave buttons silently flex-shrinking to
+32px, the Settings gear collapsing to 25px once the title was allowed to grow, and the
+project title truncating to "Unti…" behind a build stamp that had wrapped onto two lines.
+
+That last one settled a small argument with itself. The build stamp is in the title bar
+because "am I looking at the fix I just built" has no other answer once an OS caches an
+app, and a device is where you ask that most — so it is the one `.editor__stat` kept below
+900px. But a phone title bar has about 120pt spare after a back button and a Console
+toggle, and spending it on a version string leaves the project name as "U…". Which project
+you are in is what the bar is for. Settings → About carries the same build in full and
+already describes itself as the side that cannot lie, so at phone width the stamp goes and
+the name stays.
+
+### Not verified — needs a Mac and a phone
+
+Everything about how this behaves on the actual device. Chromium's `pointer: coarse` and
+`env(safe-area-inset-*)` are the same specifications WKWebView implements, but "the same
+specification" and "the same behaviour" have not been the same thing on this project before.
+Specifically at risk, in rough order of likelihood:
+
+1. **The keyboard-avoidance behaviour.** When the software keyboard opens for the prompt
+   field, iOS scrolls the page rather than resizing the viewport, and a `position: fixed`
+   layout can end up with its bottom bars under the keyboard or scrolled off. Nothing here
+   addresses that, because it cannot be reproduced or fixed blind. It is the most likely
+   thing to be wrong on first run.
+2. **`100dvh` under Tauri.** Guarded behind `@supports` for Safari 15.0–15.3, and in a
+   Tauri webview there is no dynamic browser chrome so it should equal `100%`. Should.
+3. **Whether the safe-area values are what iOS actually reports** for each device, and
+   whether they update on rotation without a reload.
+4. **Two-finger gestures against WKWebView's own.** A two-finger drag near the bottom edge
+   can be claimed by the system, and `user-scalable=no` is what is supposed to stop a pinch
+   zooming the whole UI instead of the roll. Both need a device.
+5. **Whether hiding the keyboard in landscape is tolerable in practice** rather than on
+   paper.
+
+### What a human should test on an iPhone
+
+- [ ] Portrait: confirm nothing sits under the Dynamic Island or the home indicator, in
+      both the picker and the editor, and with the console both open and closed.
+- [ ] Rotate to landscape and back with a project open. Confirm the layout changes, the
+      insets move to the sides, and nothing is left under the notch.
+- [ ] Tap a transport button and then tap elsewhere — confirm it does not stay lit.
+- [ ] Tap the tempo field. **Confirm the page does not zoom in.** If it does, the 16px
+      field rule is not taking effect and everything below it will be off-centre too.
+- [ ] With the software keyboard open on the prompt field, confirm the field is visible and
+      the Send button reachable. This is finding 1 above; expect trouble.
+- [ ] Two fingers on the roll: pan around, then pinch. Confirm the roll zooms and the whole
+      app does not.
+- [ ] One finger on the roll: draw a note, drag it, drag its right edge, marquee-select.
+      Confirm each still behaves as it does with a mouse.
+- [ ] Start a two-finger pinch while a note drag is in progress. Confirm the drag stops,
+      the note stays where the drag left it, and one undo puts it back.
+- [ ] Play the on-screen keys with a thumb; confirm you hit the note you aimed at, and that
+      the octave buttons are comfortable.
+- [ ] Long-press a piano key and a transport button — confirm no selection loupe or callout
+      appears.
+- [ ] Open Settings and the New Project sheet; confirm both rise from the bottom edge and
+      their buttons clear the home indicator.
+- [ ] Scroll the inspector to its end and keep flicking; confirm the page behind it does
+      not move.

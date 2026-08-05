@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PHONE, useMediaQuery } from "../../lib/useMediaQuery";
 import { isBlackKey, pitchName } from "./pianoRollGeometry";
 import "./OnScreenKeyboard.css";
 
@@ -32,6 +33,19 @@ const OCTAVE_UP = "x";
 /** Two octaves visible, per the spec. */
 const VISIBLE_SEMITONES = 24;
 
+/**
+ * One octave on a phone.
+ *
+ * This is the one place the keyboard cannot be fixed by styling it. Two octaves is
+ * fifteen white keys; across the ~330pt a phone has left after the octave controls that
+ * is 22pt per key, and the black keys sitting on top of them are 14pt wide — a third of
+ * what a fingertip can aim at, so every press is a coin toss between two semitones. One
+ * octave puts a white key at ~40pt, which is the width the notes have to be for the
+ * keyboard to be an instrument rather than a picture of one. The octave buttons beside
+ * it are how you reach the rest, and they matter much more here than on a desktop.
+ */
+const COMPACT_SEMITONES = 12;
+
 interface OnScreenKeyboardProps {
   /** Display only. Rust applies the velocity — this just shows what it will be. */
   velocity: number;
@@ -49,6 +63,12 @@ export function OnScreenKeyboard({
   onNoteOff,
   externalNotes,
 }: OnScreenKeyboardProps) {
+  // A phone standing up has no room for two octaves of playable keys; lying down it has
+  // the width but only ~60pt of height, and a one-octave board keeps the keys square
+  // enough to aim at rather than turning them into slivers.
+  const compact = useMediaQuery(PHONE);
+  const visibleSemitones = compact ? COMPACT_SEMITONES : VISIBLE_SEMITONES;
+
   // MIDI 48 = C3, so the default two octaves span C3–C5 around middle C.
   const [baseOctave, setBaseOctave] = useState(4);
   const [held, setHeld] = useState<Set<number>>(new Set());
@@ -156,7 +176,7 @@ export function OnScreenKeyboard({
   /** A key is lit if it is held locally or by an external controller. */
   const isHeld = (pitch: number) => held.has(pitch) || externalNotes?.has(pitch) === true;
 
-  const pitches = Array.from({ length: VISIBLE_SEMITONES + 1 }, (_, i) => basePitch + i);
+  const pitches = Array.from({ length: visibleSemitones + 1 }, (_, i) => basePitch + i);
   const whites = pitches.filter((p) => !isBlackKey(p));
 
   // Black keys are positioned as a fraction of the white-key run so the two octaves

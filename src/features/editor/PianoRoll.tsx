@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { EditRequest, Note, NoteDiff, TimeSignature, Track } from "../../lib/types";
 import {
-  GRID_OPTIONS,
   gridTicks,
   hitTest,
   isBlackKey,
@@ -19,14 +18,15 @@ import {
   snapTick,
   snapTickDown,
   tickToX,
+  velocityLaneHeight,
   type Viewport,
   xToTick,
   yToPitch,
 } from "./pianoRollGeometry";
+import { isNavigating, pinchView, type TouchPoint, useRollWheel } from "./rollGestures";
+import { RollToolbar } from "./RollToolbar";
+import { useRollShortcuts } from "./useRollShortcuts";
 import "./PianoRoll.css";
-
-/** Height of the velocity lane beneath the roll. */
-const VELOCITY_LANE_HEIGHT = 72;
 
 /** Below this drag distance a pointer-up counts as a click, not a drag. */
 const DRAG_THRESHOLD_PX = 3;
@@ -57,7 +57,11 @@ type Gesture =
   | { type: "move"; startTick: number; startPitch: number; indices: number[]; moved: boolean }
   | { type: "resize"; startTick: number; indices: number[]; moved: boolean }
   | { type: "velocity"; indices: number[] }
-  | { type: "scrub" };
+  | { type: "scrub" }
+  // Two fingers on the canvas: panning and zooming rather than editing. Holds the
+  // touches and the viewport as they were when the second finger landed, because
+  // pinchView measures from the start of the gesture rather than frame to frame.
+  | { type: "pinch"; from: readonly [TouchPoint, TouchPoint]; view: Viewport };
 
 export function PianoRoll({
   track,
@@ -83,7 +87,6 @@ export function PianoRoll({
   const [scrollTicks, setScrollTicks] = useState(0);
   const [topPitch, setTopPitch] = useState(84);
   const [gesture, setGesture] = useState<Gesture>({ type: "none" });
-  const [clipboard, setClipboard] = useState<Note[]>([]);
 
   const view: Viewport = useMemo(
     () => ({ pxPerTick, rowHeight, scrollTicks, topPitch }),
@@ -101,13 +104,18 @@ export function PianoRoll({
 
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) setSize({ width: Math.max(200, rect.width), height: Math.max(160, rect.height) });
+      // The floor is what the roll needs to draw a ruler and a few semitones. Higher
+      // than that and the canvas is taller than the box holding it, so on a short
+      // screen the bottom — which is where the velocity lane is — is simply clipped
+      // away rather than shrunk.
+      if (rect) setSize({ width: Math.max(200, rect.width), height: Math.max(96, rect.height) });
     });
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
 
-  const rollHeight = Math.max(80, size.height - VELOCITY_LANE_HEIGHT);
+  const velocityLane = velocityLaneHeight(size.height);
+  const rollHeight = size.height - velocityLane;
 
   // -- drawing -------------------------------------------------------------
 
@@ -256,31 +264,33 @@ export function PianoRoll({
     }
 
     // ---- velocity lane ----
-    const laneTop = rollHeight;
-    ctx.fillStyle = bg1;
-    ctx.fillRect(0, laneTop, size.width, VELOCITY_LANE_HEIGHT);
-    ctx.strokeStyle = border;
-    ctx.beginPath();
-    ctx.moveTo(0, laneTop + 0.5);
-    ctx.lineTo(size.width, laneTop + 0.5);
-    ctx.stroke();
+    if (velocityLane > 0) {
+      const laneTop = rollHeight;
+      ctx.fillStyle = bg1;
+      ctx.fillRect(0, laneTop, size.width, velocityLane);
+      ctx.strokeStyle = border;
+      ctx.beginPath();
+      ctx.moveTo(0, laneTop + 0.5);
+      ctx.lineTo(size.width, laneTop + 0.5);
+      ctx.stroke();
 
-    ctx.fillStyle = text2;
-    ctx.font = "10px ui-monospace, monospace";
-    ctx.fillText("VELOCITY", 6, laneTop + 14);
+      ctx.fillStyle = text2;
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.fillText("VELOCITY", 6, laneTop + 14);
 
-    const laneBottom = laneTop + VELOCITY_LANE_HEIGHT - 6;
-    const laneHeight = VELOCITY_LANE_HEIGHT - 22;
+      const laneBottom = laneTop + velocityLane - 6;
+      const laneHeight = velocityLane - 22;
 
-    track.notes.forEach((note, index) => {
-      const x = tickToX(note.start_ticks, view);
-      if (x < KEY_WIDTH || x > size.width) return;
-      const height = (note.velocity / 127) * laneHeight;
-      ctx.fillStyle = selectionSet.has(index) ? accent : track.color;
-      ctx.globalAlpha = selectionSet.has(index) ? 1 : 0.7;
-      ctx.fillRect(x, laneBottom - height, 3, height);
-    });
-    ctx.globalAlpha = 1;
+      track.notes.forEach((note, index) => {
+        const x = tickToX(note.start_ticks, view);
+        if (x < KEY_WIDTH || x > size.width) return;
+        const height = (note.velocity / 127) * laneHeight;
+        ctx.fillStyle = selectionSet.has(index) ? accent : track.color;
+        ctx.globalAlpha = selectionSet.has(index) ? 1 : 0.7;
+        ctx.fillRect(x, laneBottom - height, 3, height);
+      });
+      ctx.globalAlpha = 1;
+    }
 
     // ---- ruler ----
     ctx.fillStyle = bg1;
@@ -370,7 +380,7 @@ export function PianoRoll({
       ctx.stroke();
     }
   }, [
-    size, rollHeight, view, track, selectionSet, ppq, timeSignature,
+    size, rollHeight, velocityLane, view, track, selectionSet, ppq, timeSignature,
     scrollTicks, pxPerTick, rowHeight, topPitch, snap, gesture, playheadTicks, loopRegion,
     preview,
   ]);
@@ -389,12 +399,36 @@ export function PianoRoll({
 
   const dragOrigin = useRef({ x: 0, y: 0 });
 
+  /**
+   * Every pointer currently down on the canvas, so a second finger can be noticed. A
+   * ref rather than state: it is read inside the same handler that writes it, and a
+   * render between the two would lose the gesture.
+   */
+  const pointers = useRef(new Map<number, TouchPoint>());
+
+  /** The two touches of a pinch, in the order they arrived. */
+  function pinchPair(): readonly [TouchPoint, TouchPoint] | null {
+    const live = [...pointers.current.values()];
+    return live.length >= 2 ? [live[0]!, live[1]!] : null;
+  }
+
   function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     // A proposal is on screen. Editing underneath it would invalidate it — Rust checks
     // and refuses on accept — so the roll is read-only until the user decides.
     if (preview) return;
 
     const { x, y } = localPoint(event);
+    pointers.current.set(event.pointerId, { x, y });
+
+    // A second finger takes over from whatever the first one was doing. Any edit it
+    // already made stands and is one undo away, which is the right outcome — the
+    // alternative is a pinch that silently reverts a drag you meant to keep.
+    const pair = pinchPair();
+    if (isNavigating(pointers.current.size) && pair) {
+      setGesture({ type: "pinch", from: pair, view });
+      return;
+    }
+
     dragOrigin.current = { x, y };
     canvasRef.current?.setPointerCapture(event.pointerId);
 
@@ -412,8 +446,8 @@ export function PianoRoll({
       return;
     }
 
-    // Velocity lane.
-    if (y >= rollHeight) {
+    // Velocity lane, when there is one.
+    if (velocityLane > 0 && y >= rollHeight) {
       const target = selection.length > 0 ? selection : [];
       if (target.length > 0) {
         setGesture({ type: "velocity", indices: target });
@@ -472,8 +506,8 @@ export function PianoRoll({
   }
 
   function applyVelocityFromY(y: number, indices: number[]) {
-    const laneBottom = rollHeight + VELOCITY_LANE_HEIGHT - 6;
-    const laneHeight = VELOCITY_LANE_HEIGHT - 22;
+    const laneBottom = rollHeight + velocityLane - 6;
+    const laneHeight = velocityLane - 22;
     const ratio = Math.min(1, Math.max(0, (laneBottom - y) / laneHeight));
     onEdit({
       kind: "set_velocity",
@@ -484,8 +518,24 @@ export function PianoRoll({
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (gesture.type === "none") return;
     const { x, y } = localPoint(event);
+    if (pointers.current.has(event.pointerId)) {
+      pointers.current.set(event.pointerId, { x, y });
+    }
+
+    if (gesture.type === "pinch") {
+      const pair = pinchPair();
+      // One finger lifted mid-gesture; the remaining one must not start editing from
+      // wherever it happens to be, so the roll waits for it to be lifted too.
+      if (!pair) return;
+      const next = pinchView({ from: gesture.from, to: pair, view: gesture.view });
+      setPxPerTick(next.pxPerTick);
+      setScrollTicks(next.scrollTicks);
+      setTopPitch(next.topPitch);
+      return;
+    }
+
+    if (gesture.type === "none") return;
 
     if (gesture.type === "scrub") {
       onScrub(Math.max(0, snapTick(xToTick(x, view), snap)));
@@ -536,6 +586,15 @@ export function PianoRoll({
 
   function onPointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
     canvasRef.current?.releasePointerCapture(event.pointerId);
+    pointers.current.delete(event.pointerId);
+
+    // Lifting out of a pinch resolves to nothing rather than falling through to the
+    // marquee branch below, which would read the gesture as a tap and draw a note
+    // wherever the fingers happened to be.
+    if (gesture.type === "pinch") {
+      setGesture({ type: "none" });
+      return;
+    }
 
     if (gesture.type === "marquee") {
       const picked = notesInMarquee(track.notes, gesture.marquee, view);
@@ -565,115 +624,20 @@ export function PianoRoll({
     setGesture({ type: "none" });
   }
 
-  // -- wheel: scroll and zoom ----------------------------------------------
+  useRollWheel({ canvasRef, view, setPxPerTick, setScrollTicks, setTopPitch });
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // Registered non-passively so `preventDefault` works — otherwise the whole page
-    // scrolls (and on a trackpad, pinch-zooms the webview) instead of the roll.
-    function onWheel(event: WheelEvent) {
-      event.preventDefault();
-      const rect = canvas!.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-
-      if (event.ctrlKey || event.metaKey) {
-        // Zoom about the pointer, so the tick under the cursor stays put.
-        const anchorTick = xToTick(x, view);
-        const factor = Math.exp(-event.deltaY * 0.003);
-        const next = Math.min(4, Math.max(0.005, pxPerTick * factor));
-        setPxPerTick(next);
-        setScrollTicks(Math.max(0, anchorTick - (x - KEY_WIDTH) / next));
-        return;
-      }
-
-      if (event.shiftKey) {
-        setScrollTicks((prev) => Math.max(0, prev + event.deltaY / pxPerTick));
-        return;
-      }
-
-      setScrollTicks((prev) => Math.max(0, prev + event.deltaX / pxPerTick));
-      setTopPitch((prev) =>
-        Math.min(MAX_PITCH, Math.max(12, prev - Math.round(event.deltaY / rowHeight))),
-      );
-    }
-
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", onWheel);
-  }, [view, pxPerTick, rowHeight]);
-
-  // -- keyboard ------------------------------------------------------------
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      // Never steal keys from a text field.
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-        return;
-      }
-      if (preview) return;
-
-      const mod = event.metaKey || event.ctrlKey;
-
-      if ((event.key === "Delete" || event.key === "Backspace") && selection.length > 0) {
-        event.preventDefault();
-        onEdit({ kind: "delete", track: trackIndex, indices: selection });
-        onSelectionChange([]);
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "a") {
-        event.preventDefault();
-        onSelectionChange(track.notes.map((_, index) => index));
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "c" && selection.length > 0) {
-        event.preventDefault();
-        setClipboard(selection.map((index) => track.notes[index]!).filter(Boolean));
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "x" && selection.length > 0) {
-        event.preventDefault();
-        setClipboard(selection.map((index) => track.notes[index]!).filter(Boolean));
-        onEdit({ kind: "delete", track: trackIndex, indices: selection });
-        onSelectionChange([]);
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "v" && clipboard.length > 0) {
-        event.preventDefault();
-        onEdit({ kind: "paste", track: trackIndex, notes: clipboard, at_ticks: snapTick(playheadTicks, snap) });
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "q" && selection.length > 0) {
-        event.preventDefault();
-        onEdit({ kind: "quantize", track: trackIndex, indices: selection, grid_ticks: snap });
-        return;
-      }
-
-      // Arrow nudging. Shift moves by an octave / a whole bar rather than one step.
-      if (selection.length > 0 && event.key.startsWith("Arrow")) {
-        event.preventDefault();
-        const beat = (ppq * 4) / timeSignature.denominator;
-
-        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-          const delta = (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 12 : 1);
-          onEdit({ kind: "move", track: trackIndex, indices: selection, delta_ticks: 0, delta_pitch: delta });
-        } else {
-          const step = snap > 0 ? snap : Math.round(ppq / 4);
-          const delta = (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? beat : step);
-          onEdit({ kind: "move", track: trackIndex, indices: selection, delta_ticks: delta, delta_pitch: 0 });
-        }
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selection, clipboard, track, trackIndex, onEdit, onSelectionChange, snap, ppq, timeSignature, playheadTicks, preview]);
+  useRollShortcuts({
+    track,
+    trackIndex,
+    selection,
+    onSelectionChange,
+    onEdit,
+    snap,
+    ppq,
+    timeSignature,
+    playheadTicks,
+    readOnly: Boolean(preview),
+  });
 
   // -- render --------------------------------------------------------------
 
@@ -682,56 +646,15 @@ export function PianoRoll({
 
   return (
     <div className="roll">
-      <div className="roll__toolbar">
-        <label className="roll__control">
-          <span className="roll__control-label">Grid</span>
-          <select
-            className="input roll__select"
-            value={gridDivisor}
-            onChange={(e) => setGridDivisor(Number(e.target.value))}
-          >
-            {GRID_OPTIONS.map((option) => (
-              <option key={option.label} value={option.divisor}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="roll__control">
-          <span className="roll__control-label">Zoom</span>
-          <input
-            type="range"
-            min={0.005}
-            max={1}
-            step={0.005}
-            value={pxPerTick}
-            onChange={(e) => setPxPerTick(Number(e.target.value))}
-            className="roll__range"
-            aria-label="Horizontal zoom"
-          />
-        </label>
-
-        <label className="roll__control">
-          <span className="roll__control-label">Rows</span>
-          <input
-            type="range"
-            min={6}
-            max={28}
-            step={1}
-            value={rowHeight}
-            onChange={(e) => setRowHeight(Number(e.target.value))}
-            className="roll__range"
-            aria-label="Vertical zoom"
-          />
-        </label>
-
-        <div className="spacer" />
-
-        <span className="roll__hint muted">
-          {selection.length > 0 ? `${selection.length} selected` : "click to add · drag to select"}
-        </span>
-      </div>
+      <RollToolbar
+        gridDivisor={gridDivisor}
+        onGridDivisorChange={setGridDivisor}
+        pxPerTick={pxPerTick}
+        onPxPerTickChange={setPxPerTick}
+        rowHeight={rowHeight}
+        onRowHeightChange={setRowHeight}
+        selectionCount={selection.length}
+      />
 
       <div className="roll__canvas-wrap" ref={containerRef}>
         <canvas

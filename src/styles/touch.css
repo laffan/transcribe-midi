@@ -1,0 +1,116 @@
+/*
+ * The finger layer.
+ *
+ * Everything here keys off `pointer: coarse` / `hover: none` rather than a width,
+ * because what changes is the input device, not the screen. An iPad at 1024px needs
+ * 44pt targets and no sticky hover exactly as much as an iPhone does; a 400px-wide
+ * desktop window needs neither, and giving it them would just make a narrow window
+ * feel broken. Width belongs in the breakpoint ladder (see tokens.css); the device
+ * belongs here.
+ *
+ * Loaded after global.css so it overrides the base controls, and before nothing —
+ * a feature that needs a different answer for one of its own controls says so in its
+ * own file, at its own specificity.
+ */
+
+/* --------------------------------------------------------------- targets -- */
+
+/*
+ * The 44pt floor itself is set in tokens.css, next to the bar heights it forces up with
+ * it — a 44px control centred in a 40px bar overflows the bar, so the two numbers are
+ * one decision and live together. What is left here is everything that does not resize
+ * by following `--h-control`.
+ */
+@media (pointer: coarse) {
+  /* A row that behaves as a button gets the same floor as one that is a button. */
+  [role="button"] {
+    min-height: var(--h-control);
+  }
+}
+
+/* --------------------------------------------------------------- fields -- */
+
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea,
+  .input {
+    /*
+     * WKWebView zooms the page in when a field smaller than 16px takes focus, and does
+     * not zoom back out when it loses focus — you end up scrolling a magnified app to
+     * find the transport again. `user-scalable=no` stopped preventing this years ago.
+     * The fields are 12–13px by design, so on a touch device they are pinned to the
+     * threshold rather than the design size; there is no third option that keeps both.
+     */
+    font-size: 16px;
+  }
+
+  /*
+   * The box itself stays small on purpose — what you aim at is the label wrapping it,
+   * which the feature styles give a 44pt row. A 44pt checkbox beside 13px text reads as
+   * a mis-sized control, and it is not where anyone was going to press anyway.
+   */
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+  }
+
+  /*
+   * The grab zone of a range is the height of the input, not the size of the thumb, so
+   * the input has to be tall even though the track drawn inside it is 4px. 40px rather
+   * than the full 44: these sit in the roll's toolbar, and every point that bar takes
+   * is a point off the grid it is a toolbar for.
+   */
+  input[type="range"] {
+    height: 40px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* ----------------------------------------------------------- long press -- */
+
+/*
+ * Holding a finger on an element in WKWebView raises the selection/callout UI. On a
+ * piano key or the roll canvas that turns a held note into a system popover, and on a
+ * transport button it turns a deliberate press into a magnifying loupe.
+ */
+@media (pointer: coarse) {
+  button,
+  canvas,
+  summary,
+  label,
+  [role="button"] {
+    -webkit-touch-callout: none;
+  }
+}
+
+/* ----------------------------------------------------- revealed actions -- */
+
+/*
+ * Two rows in the app hide their actions until hover. With no hover there is no reveal,
+ * so the delete buttons would exist and never be reachable. Both already pin themselves
+ * visible below 640px; this is the same rule keyed on the pointer instead, so an iPad
+ * at full width gets it too.
+ */
+@media (hover: none) {
+  .tracklist__remove,
+  .picker__item-actions {
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------------- focus -- */
+
+/*
+ * `:focus-visible` never fires for touch, which is correct — a ring around whatever you
+ * last tapped is noise. But a hardware keyboard paired to an iPad reports a coarse
+ * pointer *and* drives focus, so the ring must stay available rather than being
+ * switched off for the whole device class. Nothing to do but say so: the default
+ * behaviour is already right, and the temptation to "fix" it here is the bug.
+ */
