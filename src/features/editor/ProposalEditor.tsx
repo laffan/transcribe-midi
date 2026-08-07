@@ -73,7 +73,11 @@ export function ProposalEditor({
 
     return {
       ...size,
-      duration: Math.max(1, lastTick / ticksPerSecond + TAIL_SECONDS),
+      // The whole proposal, always: there is no recording to zoom into here, and the
+      // question being answered is "is this line right", which is a question about all
+      // of it at once.
+      startSeconds: 0,
+      spanSeconds: Math.max(1, lastTick / ticksPerSecond + TAIL_SECONDS),
       ticksPerSecond,
       low,
       high: Math.max(high, low + 12),

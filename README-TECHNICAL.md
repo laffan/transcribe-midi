@@ -42,7 +42,8 @@ src/                         React frontend.
 scripts/                     install-plugin.sh / verify-plugin.sh — build, install,
                              register and interrogate the plugin. build-ios.sh — the
                              preflight the iOS build needs before `tauri ios build`
-                             means anything.
+                             means anything. check-phone-layout.mjs /
+                             check-listen-editor.mjs — the two browser harnesses.
 ```
 
 Dependency direction is one-way and enforced by the workspace: `unplugged-core` depends on
@@ -261,6 +262,20 @@ threshold at which WKWebView zooms in on focus and never zooms back out), and ba
 piano roll. It is not a substitute for a device — see the "Not verified" list in
 DECISIONS.md Phase 11 — but every failure it reports is real.
 
+For anything that touches turning audio into notes, also:
+
+```bash
+node scripts/check-listen-editor.mjs                # same server, same playwright-core
+```
+
+It opens the Listen review stage and drives it: pinch to zoom time, pinch to zoom pitch,
+Fit, one-finger selection and the semitone step, the loop, a dial and the re-read it
+offers, and that Add to track ends the decision rather than repeating it. The stage is
+reachable in a browser at all only because the mock hands back a **canned take**
+(`src/lib/mockTake.ts`) — a fixture, not an analysis: nothing outside Rust measures a
+pitch, and nothing in that file is evidence about a transcription. It is evidence about
+the editor, which is where these bugs live.
+
 On a Mac:
 
 ```bash
@@ -309,6 +324,11 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 prompt · `⌘Z`/`⇧⌘Z` undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead ·
 `⌘Q` quantize · `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note ·
 `⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects.
+
+In the Listen review stage: `Space` play/stop · `L` loop what is on screen · `J` join ·
+`⌫` delete · arrows step the selected note (`↑↓` a semitone, `⇧` an octave; `←→` along
+the take, `⇧` ten times as far) · `+`/`−` zoom time, `0` fit · `⌘`-scroll zooms time and
+`⇧⌘`-scroll pitch · two fingers pinch, sideways for time and up-and-down for pitch.
 
 **Two modes take the keyboard, and while either is on the editor's shortcuts are
 suspended.** This is deliberate: the letter keys mean different things in each, and there

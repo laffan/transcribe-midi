@@ -45,7 +45,7 @@ export function ListenOverlay({
         <div className="spacer" />
         {onClose && (
           <button
-            className="btn btn--ghost btn--icon"
+            className="btn btn--ghost btn--icon listen__close"
             onClick={onClose}
             aria-label={closeLabel}
             title={closeLabel}

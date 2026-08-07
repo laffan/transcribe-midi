@@ -2936,3 +2936,162 @@ sources' first iOS compile, then the Xcode link of the staticlib, then signing.
 - [ ] `cargo build -p unplugged --lib --target aarch64-apple-ios` from a plain terminal.
       It runs the same build script with Xcode nowhere near the environment, which is the
       control for the `SDKROOT` change.
+
+---
+
+## Getting close to a take
+
+Seven things came back from an iPad, and they are the same thing seven times: the review
+stage was designed at desk width for a mouse, and correcting a transcription is close
+work done with a finger. The take was drawn all-at-once across the width, where a
+semitone is four pixels and a tenth of a second is invisible; the controls that fix a
+whole take at once were folded away under a label in the smallest type on screen; and
+the settings that were on by default were the ones that move notes before anyone has
+looked at them.
+
+### Zoom is not a view preference here, it is the editing tool
+
+The scale grew a *window* — a stretch of time and a stretch of pitch — and everything
+draws and hit-tests through it. That is the change the other six sit on: at six seconds
+across a display, "drag this note up a semitone" is a four-pixel gesture, and no amount
+of steadiness makes a four-pixel gesture reliable. Zoomed to half a second and four
+semitones, the same note is a target the size of a key.
+
+**A pinch zooms one axis, and which one is decided when the fingers land** — sideways for
+time, up and down for pitch, held for the rest of the gesture. The piano roll settles the
+same question differently, zooming time only and leaving pitch to a slider, and the
+reason to diverge is that this view has no room for a slider and pitch is the axis it
+exists to work in. Re-deciding the axis per frame would flip it mid-squeeze; zooming both
+at once would make every sideways spread a small accidental pitch zoom. Deciding once
+gives one gesture that does two jobs and never both at the same time. ⌘-scroll and
+⇧⌘-scroll are the same two zooms for a trackpad, anchored on the same rule, and there are
+`−`/`+`/`Fit` buttons for the case where neither is to hand.
+
+The window is also why the waveform is re-fetched as it moves: `capture_waveform` already
+took a range, and one bucket per pixel of the *window* is what makes a 60 ms stretch look
+like audio rather than a straight line.
+
+### The loop is whatever you are looking at
+
+No second region to place, drag and keep in step with the zoom. You have already said
+which part of the take you care about by looking at it, so Loop plays that and starts
+again when it reaches the end of it — and narrowing the window while it runs re-aims the
+loop, which is the whole working method: zoom until the note is the only thing on screen,
+loop it, fix it, listen.
+
+It needed one piece of state that was not there: whether the user *wants* sound, as
+opposed to whether any is coming out. The loop restarts playback when it ends, so "it
+stopped" cannot be the signal to stop wanting it.
+
+### A semitone step is a step, not a short drag
+
+Dragging a note is a distance, and the two are not interchangeable. `↑`/`↓` move the
+selected note by a semitone (`⇧` an octave), `←`/`→` along the take, and because a
+touchscreen has no arrow keys the same two steps are buttons in the bar, beside the
+note's name. Next to them is **how far the take actually sat from that note, in cents**,
+read from the frames rather than carried on the note so it survives every edit — a note
+the analysis rounded up from 44 cents flat is worth hearing again, and nothing else on
+screen said so in a number.
+
+**What this does not do is quarter tones.** A `Note` in this app is a MIDI pitch, an
+integer, and a note that sits between two of them cannot be expressed without either a
+`cents` field through the core model, the SMF writer, the sequencer and the plugin ABI,
+or a pitch-bend stream beside the notes. That is a change to what a note *is* rather than
+to the editor over it, so it is not in here. What is in here is the measurement, in the
+place where the decision is made.
+
+### Snapping starts off, and can be turned off
+
+Two different snaps wore one name. The **Snap to** control quantises during the analysis:
+it moves every note before anyone has looked at one, and where it guesses wrong the
+evidence for what was actually played is a note-width from where the note now sits. It
+now starts at Off — a take comes back as performed, and the grid is something to apply
+afterwards, to the notes you chose, from the roll's own Quantize.
+
+The second snap was invisible and unconditional: a dragged boundary jumped to the nearest
+detected attack within 50 ms whatever the settings said. That is right nine times out of
+ten and impossible to defeat the tenth — the one where the attack was detected in the
+wrong place, which is exactly when someone is dragging the edge by hand. It follows the
+same control now, so "Snap to: Off" means nothing snaps.
+
+### The dials are a panel, and the dials are sliders
+
+Open when the stage opens. The old theory — that changing how a take is *read* is rarer
+than moving a note that came out wrong — survives until someone has a wrong result in
+front of them, at which point the dials are the only thing that fixes all of it at once,
+and a fold costs a press and, first, knowing they are there.
+
+They are also no longer `<input type="range">`. Its thumb is a platform decision, about
+12px in WKWebView, and cannot be made bigger without `::-webkit-slider-thumb` and then a
+re-implementation per engine anyway. `components/Slider.tsx` is pointer-driven — one path
+for mouse, pen and touch — with the three sizes kept independent: a 6px line because that
+is all a value needs to be legible, a 20px grip because it has to be findable without
+looking, and a 44px row because that is what a finger lands on. Arrows, Home/End and Page
+work as they do on the control it replaces.
+
+### One decision, once
+
+"Add to track" now clears the pending take *before* it commits, and leaves it cleared. A
+failure after that is reported as an error rather than by leaving the same button on
+screen, which is what turned one decision into two: press it, look at the roll, find the
+take still asking to be added.
+
+**What was actually reported was a second Add to track step, and it could not be
+reproduced.** Driven in the browser, before any of this, the overlay's button applied the
+take and closed everything in one press. Two things could produce what was seen — an
+accept that failed and left the review bar up, or the bar found after closing the overlay
+with the ✕ — and the change above removes the first. If it happens again, the screen it
+happens on is the missing piece.
+
+### The ✕, and the analysis panel that ate the canvas
+
+The close button was a 30px box with a 13px glyph in it, 44px on a touchscreen: right for
+a toolbar of twenty controls, wrong for the only exit from a view that owns the screen.
+Both numbers doubled, because a bigger box around the same small mark still reads as a
+small mark.
+
+Making the panel visible turned up a layout bug that had been hiding inside the fold.
+`.listen__actions` wraps its children; the review stage overrides the *direction* to
+column and left `wrap` on, which makes a wrapping column container — whose single flex
+line stretches to the container's height, and whose last item absorbs the slack. The
+analysis panel was 326px tall around 203px of dials, and the take had lost 120px of
+canvas to empty background. One `flex-wrap: nowrap`.
+
+### The browser preview can open the Listen stage now
+
+None of the above could be looked at without a Mac. The mock backend refused every
+capture call, so the largest view in the app was unreachable in the browser preview, and
+every one of these findings had to come off a device.
+
+It now hands back a **canned take** (`src/lib/mockTake.ts`): a written-down phrase, a
+pitch trace under it, an envelope for the waveform, and a caricature of what each dial
+does, so the re-process affordance has something to do. It is a fixture, not an analysis
+— nothing here measures a pitch, and the distinction is the reason the mock had refused
+in the first place. Every real answer still comes from `unplugged-transcribe`.
+
+What that buys is `scripts/check-listen-editor.mjs`: 23 assertions over the stage,
+including the gestures, driven through real multi-touch, on any machine, in ten seconds.
+It found the flex-wrap bug and a close button that was still 44px because `.btn--icon`
+won on source order.
+
+### What was verified
+
+- `node scripts/check-listen-editor.mjs` — clean. Pinch zooms time; a vertical pinch
+  zooms pitch and leaves time alone; Fit restores; one finger still selects and drags a
+  note; the arrow steps it exactly one semitone; the cents readout appears; the loop is
+  still running a second later; a dial follows the pointer and marks the result stale;
+  Add to track closes the stage and asks nothing further.
+- `node scripts/check-phone-layout.mjs` — clean at all six geometries, multi-touch
+  included, so nothing here broke the roll.
+- The review stage was looked at, not only asserted, at 1180×820, 820×1180 and 430×932.
+- `cargo test --workspace`, clippy, `tsc --noEmit && vite build` — all clean. No Rust
+  changed.
+
+### Not verified — needs the device
+
+Everything about how it *feels*, which is the point of the exercise: whether a pinch on
+glass lands on the axis the fingers meant, whether a 44px slider row is enough while
+holding an iPad in one hand, and whether the loop's restart is tight enough to work
+against. The restart is driven by a 50 ms position poll, so it can overshoot the end of
+the window by that much before it comes back; if that reads as sloppy on a device, the
+fix is a loop in the Rust player rather than a faster poll.

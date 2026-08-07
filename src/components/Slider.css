@@ -1,0 +1,125 @@
+/*
+ * The slider is a line with a grip on it, and a hit area much taller than either.
+ *
+ * The three sizes are deliberate and independent: the *line* is 6px because that is all
+ * a value needs to be legible, the *grip* is 20px because it has to be findable without
+ * looking, and the *row* is 44px because that is what a finger lands on. Making the line
+ * the target — which is what a bare range input does — is the mistake this replaces.
+ */
+
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.slider__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.slider__label {
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The number is the readout you tune against, so it is given the weight of one. */
+.slider__value {
+  flex: 0 0 auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--text-0);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/*
+ * `touch-action: none` because the gesture is a horizontal drag inside a panel that
+ * scrolls vertically: without it the browser claims the drag as a scroll after a few
+ * pixels and the dial stops following the finger halfway through.
+ */
+.slider__hit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.slider__track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.slider__fill {
+  display: block;
+  height: 100%;
+  width: var(--slider-fill, 0%);
+  background: var(--accent);
+}
+
+.slider__thumb {
+  position: absolute;
+  left: var(--slider-fill, 0%);
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 50%;
+  background: var(--text-0);
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-modal, 0 1px 3px rgb(0 0 0 / 0.4));
+  pointer-events: none;
+}
+
+/* Focus belongs on the grip, which is the part that moves when you press an arrow. */
+.slider__hit:focus-visible .slider__thumb {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.slider__hint {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: 1.35;
+}
+
+.slider--disabled {
+  opacity: 0.45;
+}
+
+.slider--disabled .slider__hit {
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .slider__hit {
+    height: var(--h-control);
+  }
+
+  .slider__track {
+    height: 8px;
+  }
+
+  .slider__thumb {
+    width: 28px;
+    height: 28px;
+    margin: -14px 0 0 -14px;
+  }
+}

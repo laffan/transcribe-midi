@@ -49,7 +49,7 @@ export function drawProposal(ctx: CanvasRenderingContext2D, frame: Frame): void 
   // against a grid — the roll behind the overlay is where that happens.
   if (barSeconds > 0.05) {
     ctx.font = "9px ui-monospace, monospace";
-    for (let bar = 0; bar * barSeconds < scale.duration; bar += 1) {
+    for (let bar = 0; bar * barSeconds < scale.startSeconds + scale.spanSeconds; bar += 1) {
       const x = Math.round(xOf(scale, bar * barSeconds)) + 0.5;
       ctx.strokeStyle = gridBar;
       ctx.beginPath();

@@ -43,9 +43,16 @@ export function usePending({ selectedTrack, ppq, onApplied }: UsePendingOptions)
   /** What was asked for, so the wait can say what it is waiting on. */
   const [prompt, setPrompt] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  /**
+   * How the next take is read. **Snapping starts off**: quantising during the analysis
+   * moves every note before anyone has looked at one, and where it guesses wrong the
+   * evidence for what was actually played is a note-width away from where the note now
+   * sits. Off, the take comes back as performed and the grid is something to apply
+   * afterwards, to the notes you chose, from the roll's own Quantize.
+   */
   const [options, setOptions] = useState<TranscribeOptions>({
     useProjectTempo: true,
-    gridDivisor: 4,
+    gridDivisor: 0,
   });
   /**
    * The tuning the *next* take is read with. Re-deriving answers with the tuning it
@@ -74,12 +81,22 @@ export function usePending({ selectedTrack, ppq, onApplied }: UsePendingOptions)
     if (current?.kind === "transcription") await api.captureCancel().catch(() => {});
   }, [pending]);
 
+  /**
+   * Accept what is pending. **One press, and it is decided.**
+   *
+   * The pending result and the overlay are cleared before anything can fail, and they
+   * stay cleared: a failure here is a failure to *commit*, and leaving the same button
+   * on screen afterwards turns one decision into two — press it, look at the roll,
+   * find the take still asking to be added, and press it again. What the user is owed
+   * in that case is the error, which they get.
+   */
   const applyPending = useCallback(async () => {
     if (!pending) return;
+    const current = pending;
+    setPending(null);
+    setReviewing(false);
     try {
-      const state = pending.kind === "ai" ? await api.aiAccept() : await api.captureAccept();
-      setPending(null);
-      setReviewing(false);
+      const state = current.kind === "ai" ? await api.aiAccept() : await api.captureAccept();
       onApplied(state);
       logger.info("Applied — undo it like any other edit");
     } catch (error) {

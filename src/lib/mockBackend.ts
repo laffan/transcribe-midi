@@ -11,6 +11,7 @@
  */
 
 import { MockEditor, MockTransport } from "./mockEditor";
+import { mockAudition, mockPreview, mockWaveform } from "./mockTake";
 import type {
   AiEdit,
   AiModelsResponse,
@@ -37,6 +38,7 @@ import type {
   TimeSignature,
   Track,
   TrackMeta,
+  TranscribeTuning,
   TransportState,
 } from "./types";
 import { DEFAULT_PPQ } from "./types";
@@ -435,47 +437,143 @@ export const mockBackend = {
 
   // --- Audio to MIDI -------------------------------------------------------
   //
-  // getUserMedia exists in a browser, but the analysis and the capture both live in
-  // Rust — and a mock that transcribed something would be a second implementation of
-  // the one part of this app that most needs a single source of truth.
+  // No microphone and no analysis: both live in Rust, and a mock that measured a pitch
+  // would be a second implementation of the one part of this app that most needs a
+  // single source of truth. What it does instead is hand back a *canned take* — see
+  // mockTake.ts — so that the review stage, which is the largest view in the app and the
+  // one nobody can open without a Mac, can be driven and looked at. The phrase is
+  // written down, not heard.
 
   capture_start(): CaptureStatus {
-    return fail("internal", "microphone capture needs the macOS or iOS build");
+    recordingSince = performance.now();
+    return { recording: true, seconds: 0, sample_rate: 48000, level: 0, at_limit: false };
   },
-  capture_poll: (): CaptureStatus => ({
-    recording: false,
-    seconds: 0,
-    sample_rate: 0,
-    level: 0,
-    at_limit: false,
-  }),
-  capture_transcribe(): TranscriptionPreview {
-    return fail("internal", "transcription needs the macOS or iOS build");
+  capture_poll: (): CaptureStatus => {
+    if (recordingSince === null) {
+      return { recording: false, seconds: 0, sample_rate: 48000, level: 0, at_limit: false };
+    }
+    const seconds = (performance.now() - recordingSince) / 1000;
+    return {
+      recording: true,
+      seconds,
+      sample_rate: 48000,
+      // Something for the meter to do. A sine, so it reads as a level rather than noise.
+      level: 0.25 + 0.35 * Math.abs(Math.sin(seconds * 3)),
+      at_limit: seconds >= 120,
+    };
+  },
+  capture_transcribe(args: {
+    track: number;
+    useProjectTempo: boolean;
+    quantizeTicks: number;
+    tuning: TranscribeTuning;
+  }): TranscriptionPreview {
+    recordingSince = null;
+    return startTake(args.track, args.useProjectTempo, args.quantizeTicks, args.tuning);
   },
   capture_accept(): EditorState {
-    return fail("internal", "transcription needs the macOS or iOS build");
+    const current = take;
+    if (!current || current.notes.length === 0) {
+      fail("internal", "there is no transcription to apply");
+    }
+    const editor = requireEditor();
+    take = null;
+    mockAudition.stop();
+    // One undoable step, at the ticks the notes already carry — the same shape the Rust
+    // command commits.
+    return editor.apply({
+      kind: "paste",
+      track: current.track,
+      at_ticks: Math.min(...current.notes.map((n) => n.start_ticks)),
+      notes: current.notes,
+    });
   },
-  capture_cancel(): void {},
-  capture_retranscribe(): TranscriptionPreview {
-    return fail("internal", "transcription needs the macOS or iOS build");
+  capture_cancel(): void {
+    take = null;
+    recordingSince = null;
+    mockAudition.stop();
   },
-  capture_load_file(): TranscriptionPreview {
-    return fail("internal", "transcription needs the macOS or iOS build");
+  capture_retranscribe(args: {
+    useProjectTempo: boolean;
+    quantizeTicks: number;
+    tuning: TranscribeTuning;
+  }): TranscriptionPreview {
+    return startTake(take?.track ?? 0, args.useProjectTempo, args.quantizeTicks, args.tuning);
   },
-  capture_waveform: (): WaveformPeaks => [],
-  capture_progress: (): number => 0,
-  capture_set_notes(): Note[] {
-    return fail("internal", "transcription needs the macOS or iOS build");
+  capture_load_file(args: {
+    track: number;
+    useProjectTempo: boolean;
+    quantizeTicks: number;
+    tuning: TranscribeTuning;
+  }): TranscriptionPreview {
+    return startTake(args.track, args.useProjectTempo, args.quantizeTicks, args.tuning);
   },
-  audition_take(): void {
-    fail("internal", "playing a take back needs the macOS or iOS build");
+  capture_waveform: (args: { fromSeconds: number; toSeconds: number; buckets: number }):
+    WaveformPeaks => mockWaveform(args.fromSeconds, args.toSeconds, args.buckets),
+  capture_progress: (): number => 1,
+  capture_set_notes(args: { notes: Note[] }): Note[] {
+    if (!take) fail("internal", "there is no transcription to adjust");
+    take.notes = flattenToOneVoice(args.notes);
+    return take.notes;
   },
-  audition_notes(): void {
-    fail("internal", "playing notes back needs the macOS or iOS build");
+  audition_take(args: { fromSeconds: number }): void {
+    if (!take) fail("internal", "there is nothing to play");
+    mockAudition.play(args.fromSeconds);
   },
-  audition_stop(): void {},
-  audition_position: (): number | null => null,
+  audition_notes(args: { fromSeconds: number }): void {
+    mockAudition.play(args.fromSeconds);
+  },
+  audition_stop(): void {
+    mockAudition.stop();
+  },
+  audition_position: (): number | null => mockAudition.position(),
 };
+
+/** The pending take: the notes as they stand, and the track they are bound to. */
+let take: { track: number; notes: Note[] } | null = null;
+let recordingSince: number | null = null;
+
+function startTake(
+  track: number,
+  useProjectTempo: boolean,
+  quantizeTicks: number,
+  tuning: TranscribeTuning,
+): TranscriptionPreview {
+  const store = read();
+  const ppq = (openId ? store[openId]?.manifest.ppq : undefined) ?? DEFAULT_PPQ;
+  const preview = mockPreview(
+    ppq,
+    useProjectTempo,
+    transport.state().tempo_bpm,
+    quantizeTicks,
+    tuning,
+  );
+  take = { track, notes: preview.notes.map((n) => n.note) };
+  mockAudition.stop();
+  return preview;
+}
+
+/**
+ * What `unplugged_core::monophony::flatten` does, to the extent the review stage can
+ * tell: one voice, in order, with no note starting before the last one ended. Dragging
+ * a note over its neighbour has to resolve somehow, and the editor draws what comes
+ * back rather than what it sent.
+ */
+function flattenToOneVoice(notes: Note[]): Note[] {
+  const sorted = [...notes].sort((a, b) => a.start_ticks - b.start_ticks || a.pitch - b.pitch);
+  const kept: Note[] = [];
+  for (const note of sorted) {
+    const previous = kept[kept.length - 1];
+    if (previous) {
+      const end = previous.start_ticks + previous.duration_ticks;
+      if (note.start_ticks < end) {
+        previous.duration_ticks = Math.max(1, note.start_ticks - previous.start_ticks);
+      }
+    }
+    kept.push({ ...note });
+  }
+  return kept;
+}
 
 const inputSettings: InputSettings = {
   ports: [],

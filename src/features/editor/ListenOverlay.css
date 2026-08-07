@@ -57,6 +57,32 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * The way out of a mode that owns the screen, sized like one.
+ *
+ * A `btn--icon` is a 30px box with a 13px glyph in it — right for a toolbar of twenty
+ * controls, wrong for the only exit from a full-window view, where being *findable*
+ * matters more than being tidy. Both numbers grow: a bigger box around the same small
+ * mark still looks like a small mark, and the mark is what you aim at.
+ */
+/* Both classes, because `.btn--icon` pins width to `--h-control` and would otherwise win
+   on source order alone. */
+.btn.listen__close {
+  width: 60px;
+  height: 60px;
+  font-size: 26px;
+  line-height: 1;
+  border-radius: var(--radius-lg);
+}
+
+@media (pointer: coarse) {
+  .btn.listen__close {
+    width: 64px;
+    height: 64px;
+    font-size: 30px;
+  }
+}
+
 /* ------------------------------------------------------------------ body -- */
 
 .listen__body {
@@ -317,9 +343,13 @@
   border-right: none;
 }
 
-.segmented__option:hover {
-  background: var(--border);
-  color: var(--text-0);
+/* Guarded, like every other hover in the app: iOS synthesises one on tap and leaves it
+   there, so an unguarded rule reads as a stuck control. */
+@media (hover: hover) {
+  .segmented__option:hover {
+    background: var(--border);
+    color: var(--text-0);
+  }
 }
 
 .segmented__option--on,
@@ -368,11 +398,17 @@
     display: none;
   }
 
-  .listen__actions .btn {
+  /*
+   * Direct children only — the capture stage, whose footer is three buttons in a line.
+   * The review stages put theirs inside `.tedit__row`s that wrap on their own, and
+   * making every one of those an equal share of the width clipped the labels that
+   * matter most ("Add to tr…" beside "Delete n…"), which is the opposite of the point.
+   */
+  .listen__actions > .btn {
     flex: 1 1 0;
     min-width: 0;
-    /* Long labels ("Add to track") shrink rather than pushing the row wider than the
-       screen; the button stays a button either way. */
+    /* Long labels shrink rather than pushing the row wider than the screen; the button
+       stays a button either way. */
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
