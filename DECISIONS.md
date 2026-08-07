@@ -3095,3 +3095,100 @@ holding an iPad in one hand, and whether the loop's restart is tight enough to w
 against. The restart is driven by a 50 ms position poll, so it can overshoot the end of
 the window by that much before it comes back; if that reads as sloppy on a device, the
 fix is a loop in the Rust player rather than a faster poll.
+
+---
+
+## Four things a device said, and one it did not
+
+### The waveform was there all along, drawn at the height it was recorded at
+
+Reported as "I'm not seeing the waveform at the top" on an iPad. It was not missing: the
+lane drew **absolute amplitude**, and a line hummed at arm's length from a tablet records
+at around a fifteenth of full scale. Ninety-six pixels of lane, three pixels of picture —
+which reads as a broken waveform rather than as a quiet one.
+
+So the lane normalises, like every audio editor's overview: the take's peak is measured
+once, over the whole of it, and the peaks are multiplied to fill the lane. **Once, and
+over the whole take** — a window-relative gain would make a quiet passage swell the
+moment you scrolled to it, and the point of this lane is comparing one part of a take
+with another. The gain is capped at 24× so a take with nothing in it cannot be amplified
+into a picture of noise, and it is written in the corner (`waveform ×10`) because a
+whisper drawn at full height is otherwise a lie about how loud it was.
+
+Two other ways the lane can be empty now say so in it rather than by being blank: a take
+with no audio attached, and a call that failed — which used to be swallowed by a `catch`
+that set the peaks to `[]`, making a broken read indistinguishable from silence.
+
+**The fixture was the reason nobody saw it.** The canned take was written at studio
+level, so the browser showed a healthy waveform for a bug that only appears when the
+signal is quiet. It is quiet now — peak 0.068, an envelope like a real hummed line — and
+`check-listen-editor.mjs` asserts that the lane amplifies it. A fixture that is easier
+than reality is worse than no fixture.
+
+### A loop you drag out, in both editors
+
+Looping what is on screen was the right first move and the wrong last one: it cannot loop
+four notes while you are looking at all seven. Both editors now take a **drag**.
+
+In the review stage it is a drag across the waveform lane; in the piano roll it is a drag
+in the ruler. Both keep the gesture that was already there — a press that never travels
+plays from that moment, or moves the playhead — and **which one a press means is decided
+by whether it moves**, not by a modifier key. That is the only rule available: a
+touchscreen has no ⇧, and giving the loop its own strip would mean an 11px band in a
+22px ruler, which is not a target.
+
+The two ends carry tabs, and the tabs are draggable. In the review stage everything
+outside the loop is dimmed rather than the loop being tinted — the loop is where the work
+is, and a wash over it would sit between the eye and the notes. The transport keeps both
+ways in: the toolbar's Loop button still means "around here, I do not care exactly
+where", and dragging is for when you do. Both end at `set_loop_region`, so there is one
+idea of the loop rather than two.
+
+### The dials are a fixture of the stage, not a fold
+
+Made open-by-default last time, which was half the answer: a thing that can be folded
+away is a thing you have to decide about. The toggle is gone. The panel sits under the
+transport like the transport sits under the take, and the difference between a good
+transcription and a useless one is usually a dial rather than an edit.
+
+### Grips, drawn at one size and grabbed at another
+
+Nothing about a plain box says its ends behave differently from its middle, and on a
+touchscreen there is no cursor to change shape and say so. The selected note now draws
+its grips — both ends in the review stage, the right-hand end in the roll, which is the
+end that changes a length — and the band that grabs them is wider than the band that is
+drawn: 8px for a mouse, 22px for a finger, chosen per press from `event.pointerType`
+rather than from a media query, because the question is which device is touching the
+screen right now and not which devices the screen has.
+
+### What was verified
+
+- `check-listen-editor.mjs` — 28 assertions, clean: the quiet take is amplified, a drag
+  across the waveform marks a stretch of about the length dragged and turns looping on,
+  clearing it goes back to the window, and everything asserted last time still holds.
+- `check-phone-layout.mjs` — clean, with two new checks on a real touchscreen: a tap in
+  the ruler does not mark a loop, and a drag does.
+- Both harnesses against the built app, plus `tsc --noEmit && vite build`, 342 Rust tests
+  and clippy. No Rust changed.
+
+### Not verified — and one thing that is still guesswork
+
+The waveform fix is an inference, not a diagnosis: the reasoning is that a take loud
+enough to transcribe is far too quiet to draw at absolute amplitude, and the numbers say
+that is what the lane was doing. If a device still shows an empty lane, the lane now
+prints *which* of the three ways it is empty — no audio attached, almost silent, or the
+read failed — and that answer is worth more than another guess from here.
+
+### The editor crossed 700 lines, and where it split
+
+`TranscribeEditor.tsx` reached 734 with the loop drag in it, and the rule is that a file
+gets split in the change that took it there. Two hooks came out, along the two seams that
+were already there:
+
+| Was | Became |
+|---|---|
+| the peaks fetch, the take's peak, the gain, the empty-lane message | `useTakeWaveform` — the picture of the take, at the window and at a height |
+| play/stop, the loop, the marked stretch, "does the user want sound" | `useTakeLoop` — hearing the take, and the stretch of it being heard |
+
+Both are about the take rather than about a note, which is the line the editor is left
+on: pointers, pixels and what to draw. 598 lines.

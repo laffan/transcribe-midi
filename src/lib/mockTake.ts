@@ -25,7 +25,7 @@ import type {
 /** Where the fixture's "performance" sits, in seconds. */
 const HOP = 0.01;
 const TEMPO_PLAYED = 96;
-const SILENCE_FLOOR = 0.04;
+const SILENCE_FLOOR = 0.004;
 
 interface Phrase {
   pitch: number;
@@ -66,15 +66,22 @@ function phraseAt(seconds: number, phrases: Phrase[]): Phrase | null {
   return phrases.find((p) => seconds >= p.start && seconds < p.start + p.duration) ?? null;
 }
 
-/** Level envelope: an attack, a body, and a decay into the room. */
+/**
+ * Level envelope: an attack, a body, and a decay into the room.
+ *
+ * Deliberately **quiet** — it peaks around a fifteenth of full scale, which is what a
+ * hummed line at arm's length from a tablet actually records at. A fixture bounced at
+ * studio level would have hidden the bug this file exists to catch: the waveform lane
+ * drew absolute amplitude, so on a device the take was a flat line and looked broken.
+ */
 function levelAt(seconds: number, phrases: Phrase[]): number {
   const phrase = phraseAt(seconds, phrases);
-  if (!phrase) return 0.012;
+  if (!phrase) return 0.0012;
   const into = seconds - phrase.start;
   const left = phrase.start + phrase.duration - seconds;
   const attack = Math.min(1, into / 0.04);
   const release = Math.min(1, left / 0.12);
-  return 0.06 + 0.62 * attack * release;
+  return 0.006 + 0.062 * attack * release;
 }
 
 function analysisOf(phrases: Phrase[]): Analysis {

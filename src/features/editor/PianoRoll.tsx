@@ -5,9 +5,11 @@ import {
   gridTicks,
   hitTest,
   KEY_WIDTH,
+  loopEdgeAt,
   MAX_PITCH,
   MIN_PITCH,
   type Marquee,
+  normalizeLoopTicks,
   normalizeMarquee,
   notesInMarquee,
   RULER_HEIGHT,
@@ -28,6 +30,17 @@ import "./PianoRoll.css";
 /** Below this drag distance a pointer-up counts as a click, not a drag. */
 const DRAG_THRESHOLD_PX = 3;
 
+/**
+ * How close a press has to be to a note's end, or a loop's tab, to take hold of it.
+ *
+ * Two numbers because a fingertip covers about a centimetre and a mouse pointer aims at
+ * a pixel. The grip is drawn at one size either way; this is only how forgiving it is.
+ */
+const GRAB_PX = { fine: 6, coarse: 20 };
+
+const grabPx = (event: React.PointerEvent): number =>
+  event.pointerType === "mouse" ? GRAB_PX.fine : GRAB_PX.coarse;
+
 interface PianoRollProps {
   track: Track;
   trackIndex: number;
@@ -40,6 +53,8 @@ interface PianoRollProps {
   playheadTicks: number;
   onScrub: (tick: number) => void;
   loopRegion: [number, number] | null;
+  /** Set the looped span, in ticks, or clear it. Dragged out in the ruler. */
+  onLoopChange: (region: [number, number] | null) => void;
   /**
    * An AI proposal being previewed. While this is set the roll is read-only and draws
    * the change on top of the current notes rather than instead of them — the point of a
@@ -60,7 +75,9 @@ type Gesture =
   | { type: "move"; startTick: number; startPitch: number; indices: number[]; moved: boolean }
   | { type: "resize"; startTick: number; indices: number[]; moved: boolean }
   | { type: "velocity"; indices: number[] }
-  | { type: "scrub" }
+  // A press in the ruler, before it is known whether it is a tap or a drag. A tap moves
+  // the playhead; a drag marks the loop, or moves an end of the one already there.
+  | { type: "ruler"; anchorTick: number; edge: "start" | "end" | null; moved: boolean }
   // Two fingers on the canvas: panning and zooming rather than editing. Holds the
   // touches and the viewport as they were when the second finger landed, because
   // pinchView measures from the start of the gesture rather than frame to frame.
@@ -78,6 +95,7 @@ export function PianoRoll({
   playheadTicks,
   onScrub,
   loopRegion,
+  onLoopChange,
   preview,
   shortcutsSuspended = false,
 }: PianoRollProps) {
@@ -207,11 +225,16 @@ export function PianoRoll({
     dragOrigin.current = { x, y };
     canvasRef.current?.setPointerCapture(event.pointerId);
 
-    // Ruler: scrub.
+    // Ruler: the playhead and the loop share it, and which one a press means is decided
+    // by whether it travels. A tap seeks; a drag marks a loop; a press on one of the
+    // loop's tabs moves that end. No modifier, because a touchscreen has none.
     if (y < RULER_HEIGHT && x > KEY_WIDTH) {
-      const tick = snapTick(xToTick(x, view), snap);
-      onScrub(Math.max(0, tick));
-      setGesture({ type: "scrub" });
+      setGesture({
+        type: "ruler",
+        anchorTick: Math.max(0, snapTick(xToTick(x, view), snap)),
+        edge: loopEdgeAt(loopRegion, x, view, grabPx(event)),
+        moved: false,
+      });
       return;
     }
 
@@ -231,7 +254,7 @@ export function PianoRoll({
       return;
     }
 
-    const hit = hitTest(track.notes, x, y, view);
+    const hit = hitTest(track.notes, x, y, view, grabPx(event));
 
     if (hit) {
       const additive = event.shiftKey || event.metaKey || event.ctrlKey;
@@ -312,8 +335,21 @@ export function PianoRoll({
 
     if (gesture.type === "none") return;
 
-    if (gesture.type === "scrub") {
-      onScrub(Math.max(0, snapTick(xToTick(x, view), snap)));
+    if (gesture.type === "ruler") {
+      const tick = Math.max(0, snapTick(xToTick(x, view), snap));
+      const travelled = Math.abs(x - dragOrigin.current.x) > DRAG_THRESHOLD_PX;
+      if (!gesture.edge && !travelled) return;
+
+      const minimum = snap > 0 ? snap : Math.round(ppq / 4);
+      const other =
+        gesture.edge === "start"
+          ? (loopRegion?.[1] ?? gesture.anchorTick)
+          : gesture.edge === "end"
+            ? (loopRegion?.[0] ?? gesture.anchorTick)
+            : gesture.anchorTick;
+
+      onLoopChange(normalizeLoopTicks(tick, other, minimum));
+      setGesture({ ...gesture, moved: true });
       return;
     }
 
@@ -367,6 +403,14 @@ export function PianoRoll({
     // marquee branch below, which would read the gesture as a tap and draw a note
     // wherever the fingers happened to be.
     if (gesture.type === "pinch") {
+      setGesture({ type: "none" });
+      return;
+    }
+
+    // A press in the ruler that never travelled is a seek, decided here rather than on
+    // the way down so that the same press can turn out to be a loop instead.
+    if (gesture.type === "ruler") {
+      if (!gesture.moved) onScrub(gesture.anchorTick);
       setGesture({ type: "none" });
       return;
     }

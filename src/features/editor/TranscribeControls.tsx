@@ -21,6 +21,9 @@ interface TranscribeControlsProps {
   onSourceChange: (source: AuditionSource) => void;
   loop: boolean;
   onLoopChange: (loop: boolean) => void;
+  /** The stretch dragged out on the waveform, if any, in seconds. */
+  loopRegion: [number, number] | null;
+  onClearLoop: () => void;
   /** True when the window is showing less than the whole take. */
   zoomed: boolean;
   onZoom: (factor: number) => void;
@@ -55,6 +58,8 @@ export function TranscribeControls({
   onSourceChange,
   loop,
   onLoopChange,
+  loopRegion,
+  onClearLoop,
   zoomed,
   onZoom,
   onFit,
@@ -92,14 +97,32 @@ export function TranscribeControls({
           ))}
         </div>
 
-        <button
-          className={`btn ${loop ? "btn--active" : ""}`}
-          onClick={() => onLoopChange(!loop)}
-          aria-pressed={loop}
-          title="Play what is on screen round and round (L)"
-        >
-          ⟲ Loop
-        </button>
+        {/* Loop and the stretch it plays. The label says which of the two it is on,
+            because "round and round" over the wrong four seconds is a confusing thing
+            to listen to and the difference is otherwise only visible as shading. */}
+        <div className="tedit__loop" role="group" aria-label="Loop">
+          <button
+            className={`btn ${loop ? "btn--active" : ""}`}
+            onClick={() => onLoopChange(!loop)}
+            aria-pressed={loop}
+            title={
+              loopRegion
+                ? "Play the marked stretch round and round (L)"
+                : "Play what is on screen round and round (L) — drag across the waveform to mark a stretch"
+            }
+          >
+            ⟲ Loop
+          </button>
+          {loopRegion && (
+            <button
+              className="btn btn--ghost"
+              onClick={onClearLoop}
+              title="Forget the marked stretch and loop what is on screen instead"
+            >
+              <span className="mono">{(loopRegion[1] - loopRegion[0]).toFixed(2)}s</span> ✕
+            </button>
+          )}
+        </div>
 
         {/* Zoom is the editing tool here, not a view preference: a semitone and a tenth
             of a second are both too small to work with until you are in close. */}
@@ -151,8 +174,9 @@ export function TranscribeControls({
         )}
 
         <span className="field__hint">
-          Drag a note to move it, its ends to change length. Pinch or ⌘-scroll to zoom —
-          sideways for time, up and down for pitch. The line is the pitch that was measured.
+          Drag a note to move it, its ends to change length. Drag across the waveform to
+          mark a stretch to loop; press it to play from there. Pinch or ⌘-scroll to zoom —
+          sideways for time, up and down for pitch.
         </span>
       </div>
 

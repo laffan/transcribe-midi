@@ -21,12 +21,16 @@ import {
   normalizeMarquee,
   pitchName,
   pitchToY,
+  RESIZE_HANDLE_PX,
   RULER_HEIGHT,
   tickToX,
   type Viewport,
   xToTick,
 } from "./pianoRollGeometry";
 import type { RollTheme } from "./pianoRollTheme";
+
+/** Width of the draggable tab at each end of the loop, in the ruler. */
+const LOOP_TAB_PX = 8;
 
 export interface RollScene {
   theme: RollTheme;
@@ -142,6 +146,15 @@ ctx.clearRect(0, 0, width, height);
         ctx.strokeStyle = theme.keyWhite;
         ctx.lineWidth = 1;
         ctx.strokeRect(x + 0.5, rect.y + 1.5, Math.max(1, drawn) - 1, rect.height - 3);
+
+        // The grip that changes a note's length. Nothing about a plain box says its
+        // right-hand end behaves differently from its middle, and on a touchscreen
+        // there is no cursor to change shape and say so — so on the note you are
+        // working on, it is drawn. `hitTest` grabs a wider band than this.
+        if (drawn > RESIZE_HANDLE_PX * 2 && rect.height > 6) {
+          ctx.fillStyle = theme.keyWhite;
+          ctx.fillRect(x + drawn - RESIZE_HANDLE_PX, rect.y + 1, RESIZE_HANDLE_PX, rect.height - 2);
+        }
       }
     });
     ctx.globalAlpha = 1;
@@ -282,11 +295,19 @@ ctx.clearRect(0, 0, width, height);
         ctx.fillRect(startX, RULER_HEIGHT, endX - startX, rollHeight - RULER_HEIGHT);
 
         ctx.fillStyle = theme.playhead;
-        ctx.fillRect(startX, 0, 2, RULER_HEIGHT);
-        ctx.fillRect(endX - 2, 0, 2, RULER_HEIGHT);
         ctx.globalAlpha = 0.35;
         ctx.fillRect(startX, 0, endX - startX, RULER_HEIGHT);
         ctx.globalAlpha = 1;
+
+        // Tabs, not hairlines: these are dragged to move the loop's ends, and a 2px
+        // mark says "here is the edge" rather than "take hold of me".
+        ctx.fillRect(startX, 0, LOOP_TAB_PX, RULER_HEIGHT);
+        ctx.fillRect(endX - LOOP_TAB_PX, 0, LOOP_TAB_PX, RULER_HEIGHT);
+        ctx.fillStyle = theme.bg1;
+        for (const x of [startX + LOOP_TAB_PX / 2, endX - LOOP_TAB_PX / 2]) {
+          ctx.fillRect(x - 2, RULER_HEIGHT / 2 - 4, 1, 8);
+          ctx.fillRect(x + 1, RULER_HEIGHT / 2 - 4, 1, 8);
+        }
       }
     }
 

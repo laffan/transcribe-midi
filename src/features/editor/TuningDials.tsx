@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import { Slider } from "../../components/Slider";
 import { DEFAULT_TUNING, type TranscribeTuning } from "../../lib/types";
 
@@ -91,35 +89,28 @@ export function sameTuning(a: TranscribeTuning, b: TranscribeTuning): boolean {
  * line at a laptop; a plucked string or a breathy voice wants something else, and getting
  * it wrong produces a plausible-looking result rather than an obviously broken one.
  *
- * **Open when the stage opens.** It was a closed disclosure on the theory that changing
- * how a take is *read* is rarer than moving a note that came back wrong. That theory
- * survived until someone had a wrong result in front of them: the dials are what fixes a
- * whole take at once, and a fold that hides them costs a press and, first, knowing they
- * are there at all. Collapsing is still there for when the canvas is what you want.
+ * **Not a fold.** It was a closed disclosure on the theory that changing how a take is
+ * *read* is rarer than moving a note that came back wrong. That theory survives until
+ * someone has a wrong result in front of them: the dials are what fixes a whole take at
+ * once, and the difference between a good transcription and a useless one is usually a
+ * dial rather than an edit. So this is a fixture of the stage, at the same level as the
+ * transport and the decision — no toggle, no memory of a previous state, nothing to
+ * discover.
  *
  * The dials only move a *draft*. Re-reading the take is seconds of work, and doing it on
  * every release meant a pass of the analysis for each dial touched on the way to the
  * setting you wanted — so nothing happens until Re-process is pressed.
  */
 export function TuningDials({ draft, applied, disabled, onChange }: TuningDialsProps) {
-  const [open, setOpen] = useState(true);
-
   const set = (key: keyof TranscribeTuning, value: number) =>
     onChange({ ...draft, [key]: value });
 
   const pending = !sameTuning(draft, applied);
 
   return (
-    <section className={`tuning ${pending ? "tuning--pending" : ""}`}>
+    <section className={`tuning ${pending ? "tuning--pending" : ""}`} aria-label="Analysis">
       <header className="tuning__head">
-        <button
-          className="tuning__toggle"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-        >
-          <span className={`tuning__chevron ${open ? "tuning__chevron--open" : ""}`}>▸</span>
-          Analysis
-        </button>
+        <h3 className="tuning__title">Analysis</h3>
 
         {!sameTuning(applied, DEFAULT_TUNING) && (
           <span className="tuning__badge">adjusted</span>
@@ -142,31 +133,29 @@ export function TuningDials({ draft, applied, disabled, onChange }: TuningDialsP
         </button>
       </header>
 
-      {open && (
-        <div className="tuning__body">
-          <div className="tuning__grid">
-            {DIALS.map((dial) => (
-              <Slider
-                key={dial.key}
-                label={dial.label}
-                value={draft[dial.key]}
-                min={dial.min}
-                max={dial.max}
-                step={dial.step}
-                format={dial.format}
-                hint={dial.hint}
-                disabled={disabled}
-                onChange={(value) => set(dial.key, value)}
-              />
-            ))}
-          </div>
-
-          <p className="tuning__note">
-            These re-read the take you already performed — nothing here ever asks for
-            another.
-          </p>
+      <div className="tuning__body">
+        <div className="tuning__grid">
+          {DIALS.map((dial) => (
+            <Slider
+              key={dial.key}
+              label={dial.label}
+              value={draft[dial.key]}
+              min={dial.min}
+              max={dial.max}
+              step={dial.step}
+              format={dial.format}
+              hint={dial.hint}
+              disabled={disabled}
+              onChange={(value) => set(dial.key, value)}
+            />
+          ))}
         </div>
-      )}
+
+        <p className="tuning__note">
+          These re-read the take you already performed — nothing here ever asks for
+          another.
+        </p>
+      </div>
     </section>
   );
 }

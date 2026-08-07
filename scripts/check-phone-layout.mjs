@@ -311,7 +311,27 @@ const check = (name, ok, detail = "") => {
   console.log(`   ${ok ? "✓" : "✗"} ${name}${detail ? `  (${detail})` : ""}`);
 };
 
+// --- the ruler carries two gestures, and a finger can tell them apart ---
+//
+// A tap seeks and a drag marks the loop, decided by whether the pointer travels. Worth
+// asserting on a touchscreen specifically: with no modifier keys to separate them, a
+// press that wobbles by a pixel must still be a seek.
+const loopButton = page.getByRole("button", { name: /^Loop$/ });
+const loopedBefore = await loopButton.getAttribute("aria-pressed");
+
+await page.locator(".roll__canvas").tap({ position: { x: 200, y: 10 } });
+await page.waitForTimeout(200);
+const loopedAfterTap = await loopButton.getAttribute("aria-pressed");
+
+await touch("touchStart", [at(160, 10)]);
+await touch("touchMove", [at(220, 10)]);
+await touch("touchMove", [at(300, 10)]);
+await touch("touchEnd", []);
+const loopedAfterDrag = await loopButton.getAttribute("aria-pressed");
+
 check("one finger draws a note", notesBefore === "1", `→ ${notesBefore}`);
+check("a tap in the ruler does not mark a loop", loopedAfterTap === loopedBefore);
+check("a drag in the ruler does", loopedAfterDrag === "true");
 check("two-finger pan moves the roll", afterPan !== before, `${before} → ${afterPan}`);
 check("pan leaves the zoom alone", zoomAfterPan === zoomBefore, `${zoomBefore} → ${zoomAfterPan}`);
 check("pinch changes the zoom", zoomAfterPinch !== zoomAfterPan, `${zoomAfterPan} → ${zoomAfterPinch}`);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage } from "../../lib/api";
 import { logger } from "../../lib/console";
-import type { Note, TranscribeTuning, TranscriptionPreview, WaveformPeaks } from "../../lib/types";
+import type { Note, TranscribeTuning, TranscriptionPreview } from "../../lib/types";
 import { noteName } from "./timeFormat";
 import { TranscribeControls, GRIDS } from "./TranscribeControls";
 import { drawTranscription } from "./transcribeDraw";
@@ -11,8 +11,10 @@ import {
   fitWindow,
   hitTest,
   isNavigating,
+  loopEdgeAt,
   measuredCents,
   midiOf,
+  normalizeLoop,
   pinchAxisOf,
   pinchWindow,
   secondsOf,
@@ -28,7 +30,8 @@ import {
   type Window,
 } from "./transcribeGeometry";
 import { sameTuning, TuningDials } from "./TuningDials";
-import { useAudition } from "./useAudition";
+import { useTakeLoop } from "./useTakeLoop";
+import { useTakeWaveform } from "./useTakeWaveform";
 import "./TranscribeEditor.css";
 
 interface TranscribeEditorProps {
@@ -48,6 +51,16 @@ interface TranscribeEditorProps {
 
 /** How far an arrow key moves a note along the take. */
 const NUDGE_SECONDS = 0.01;
+
+/**
+ * How wide the grab band at a note's end, or at a loop's edge, is — for a pointer that
+ * can be aimed, and for one that cannot. The grips are drawn at 7px either way; what
+ * changes is how close you have to get, and a fingertip is about a centimetre across.
+ */
+const GRAB_PX = { fine: 8, coarse: 22 };
+
+/** A press that never travels this far is a tap: it plays from there rather than looping. */
+const LOOP_DRAG_PX = 6;
 
 /**
  * The review stage: the take drawn as a waveform, the measured pitch traced over it, and
@@ -71,7 +84,6 @@ export function TranscribeEditor({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 900, height: 420 });
-  const [peaks, setPeaks] = useState<WaveformPeaks>([]);
   const [notes, setNotes] = useState<Note[]>(() => preview.notes.map((n) => n.note));
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag>({ type: "none" });
@@ -91,14 +103,21 @@ export function TranscribeEditor({
       duration,
     ),
   );
-  const [loop, setLoop] = useState(false);
-  /**
-   * Whether the user wants sound, as opposed to whether any is coming out. The loop
-   * restarts playback when it ends, so "it stopped" cannot be the signal to stop.
-   */
-  const [playing, setPlaying] = useState(false);
+  const {
+    source,
+    changeSource,
+    playhead,
+    playing,
+    loop,
+    setLoop,
+    region,
+    setRegion,
+    loopSpan,
+    start,
+    togglePlay,
+  } = useTakeLoop({ preview, duration, view });
 
-  const { source, changeSource, playhead, playFrom, stop } = useAudition();
+  const wave = useTakeWaveform(preview, duration, view, size.width);
 
   // Notes arrive in ticks; everything here is in seconds against the waveform, so the
   // conversion happens once and both directions use it.
@@ -144,86 +163,8 @@ export function TranscribeEditor({
     // A fresh analysis answers with the tuning it actually used, including any clamping.
     setDraft(preview.tuning);
     setView(fitWindow(fresh, preview.analysis, Math.max(0.001, preview.duration_seconds)));
+    setRegion(null);
   }, [preview]);
-
-  // -- waveform ------------------------------------------------------------
-
-  useEffect(() => {
-    // One bucket per pixel of the *window*, redrawn as it moves: asking Rust rather than
-    // shipping the samples, because two minutes at 48 kHz is over twenty megabytes for a
-    // few hundred columns. Deferred a frame or two so a pinch does not queue one request
-    // per frame of the gesture.
-    const timer = window.setTimeout(() => {
-      const from = Math.max(0, view.startSeconds);
-      const to = Math.min(duration, view.startSeconds + view.spanSeconds);
-      if (to <= from) {
-        setPeaks([]);
-        return;
-      }
-      api
-        .captureWaveform(from, to, Math.round(size.width))
-        .then((fetched) => {
-          // The window may run off either end of the take; the peaks cover only the part
-          // that exists, so they are placed where that part is rather than at x = 0.
-          const before = Math.round(((from - view.startSeconds) / view.spanSeconds) * size.width);
-          setPeaks(
-            before > 0
-              ? [...Array.from({ length: before }, () => [0, 0] as [number, number]), ...fetched]
-              : fetched,
-          );
-        })
-        .catch(() => setPeaks([]));
-    }, 60);
-    return () => window.clearTimeout(timer);
-  }, [view, duration, size.width]);
-
-  // Re-deriving replaces the notes under the playhead, so nothing may still be sounding.
-  useEffect(() => {
-    stop();
-    setPlaying(false);
-  }, [preview, stop]);
-
-  // -- playback ------------------------------------------------------------
-
-  const start = useCallback(
-    (seconds: number) => {
-      setPlaying(true);
-      void playFrom(seconds);
-    },
-    [playFrom],
-  );
-
-  const halt = useCallback(() => {
-    setPlaying(false);
-    stop();
-  }, [stop]);
-
-  const togglePlay = useCallback(() => {
-    if (playing) halt();
-    else start(loop ? view.startSeconds : 0);
-  }, [playing, halt, start, loop, view.startSeconds]);
-
-  /**
-   * The loop, which is whatever is on screen.
-   *
-   * No second region to set and keep in step with the zoom: you have already said which
-   * part of the take you care about by looking at it, and "play what I am looking at" is
-   * one gesture rather than three. Zooming while it runs re-aims the loop, which is the
-   * whole working method — narrow the window until the note is the only thing in it.
-   */
-  useEffect(() => {
-    if (!loop || !playing) return;
-    const end = Math.min(duration, view.startSeconds + view.spanSeconds);
-    const from = Math.max(0, view.startSeconds);
-    if (playhead === null || playhead >= end) {
-      void playFrom(from);
-    }
-  }, [loop, playing, playhead, view, duration, playFrom]);
-
-  // Playback that ran off the end with no loop to catch it is playback that stopped.
-  useEffect(() => {
-    if (playing && !loop && playhead === null) setPlaying(false);
-  }, [playing, loop, playhead]);
 
   // -- navigation ----------------------------------------------------------
 
@@ -387,8 +328,18 @@ export function TranscribeEditor({
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    drawTranscription(ctx, { scale, peaks, notes, selected, analysis, playhead, loop });
-  }, [scale, size, peaks, notes, selected, analysis, playhead, loop]);
+    drawTranscription(ctx, {
+      scale,
+      peaks: wave.peaks,
+      waveGain: wave.gain,
+      waveNote: wave.note,
+      notes,
+      selected,
+      analysis,
+      playhead,
+      loop: loop ? loopSpan : null,
+    });
+  }, [scale, size, wave, notes, selected, analysis, playhead, loop, loopSpan]);
 
   // -- pointers ------------------------------------------------------------
 
@@ -400,6 +351,17 @@ export function TranscribeEditor({
     scale: Scale;
     axis: PinchAxis;
   } | null>(null);
+  /**
+   * A press in the waveform lane, before it is known whether it is a tap or a drag.
+   *
+   * The lane has to carry both: pressing it to play from a moment is the fastest way to
+   * check one, and dragging across it is how a loop gets its ends. Nothing is decided
+   * until the pointer has travelled — a tap plays, a drag loops — so neither gesture has
+   * to be spelled with a modifier a touchscreen does not have.
+   */
+  const laneDrag = useRef<{ anchorSeconds: number; x: number; edge: "start" | "end" | null } | null>(
+    null,
+  );
 
   function localPoint(event: React.PointerEvent) {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -429,14 +391,20 @@ export function TranscribeEditor({
       return;
     }
 
-    // The waveform lane is for listening, the pitch lane is for editing. Pressing the
-    // waveform plays from there, which is the fastest way to check a particular moment.
+    const grab = event.pointerType === "mouse" ? GRAB_PX.fine : GRAB_PX.coarse;
+
+    // The waveform lane is for listening and for saying which part of the take to hear
+    // again; the pitch lane is for editing.
     if (point.y < WAVE_HEIGHT) {
-      start(secondsOf(scale, point.x));
+      laneDrag.current = {
+        anchorSeconds: secondsOf(scale, point.x),
+        x: point.x,
+        edge: loopEdgeAt(scale, region, point.x, grab),
+      };
       return;
     }
 
-    const hit = hitTest(scale, notes, point.x, point.y);
+    const hit = hitTest(scale, notes, point.x, point.y, grab);
     setDrag(hit);
     setSelected(hit.type === "none" ? null : hit.index);
 
@@ -467,6 +435,22 @@ export function TranscribeEditor({
           duration,
         }),
       );
+      return;
+    }
+
+    // Dragging in the waveform lane: an edge of the loop if one was grabbed, otherwise
+    // a new loop out of the press point.
+    const lane = laneDrag.current;
+    if (lane) {
+      const at = secondsOf(scale, point.x);
+      if (lane.edge) {
+        const other = lane.edge === "start" ? loopSpan[1] : loopSpan[0];
+        setRegion(normalizeLoop(at, other, duration));
+        setLoop(true);
+      } else if (Math.abs(point.x - lane.x) > LOOP_DRAG_PX) {
+        setRegion(normalizeLoop(lane.anchorSeconds, at, duration));
+        setLoop(true);
+      }
       return;
     }
 
@@ -508,6 +492,16 @@ export function TranscribeEditor({
     pointers.current.delete(event.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
 
+    const lane = laneDrag.current;
+    laneDrag.current = null;
+    if (lane) {
+      // It never travelled, so it was a press on a moment rather than a drag across a
+      // stretch: play from there.
+      const { x } = localPoint(event);
+      if (!lane.edge && Math.abs(x - lane.x) <= LOOP_DRAG_PX) start(lane.anchorSeconds);
+      return;
+    }
+
     if (drag.type === "none") return;
     setDrag({ type: "none" });
     auditioned.current = null;
@@ -548,10 +542,14 @@ export function TranscribeEditor({
 
         {/* How close in you are, which the ruler alone does not say once the window is
             shorter than a second. */}
+        {/* How close in you are, and — when the take was quiet enough to need it — how
+            much the waveform has been amplified to be worth looking at. Said out loud,
+            because a normalised overview of a whisper otherwise looks like a shout. */}
         <span className="tedit__readout mono">
           {view.spanSeconds < duration - 0.01
             ? `${view.spanSeconds.toFixed(2)}s across · ${semitonePx(scale).toFixed(0)}px a semitone`
             : `${duration.toFixed(1)}s take`}
+          {wave.gain > 1.5 && ` · waveform ×${wave.gain.toFixed(0)}`}
         </span>
       </div>
 
@@ -563,6 +561,8 @@ export function TranscribeEditor({
           onSourceChange={changeSource}
           loop={loop}
           onLoopChange={setLoop}
+          loopRegion={region}
+          onClearLoop={() => setRegion(null)}
           zoomed={view.spanSeconds < duration - 0.01}
           onZoom={zoom}
           onFit={fit}

@@ -19,18 +19,31 @@ export interface Frame {
   scale: Scale;
   /** One min/max pair per pixel of the *window*, not of the take. */
   peaks: WaveformPeaks;
+  /**
+   * What to multiply the peaks by so the take fills the lane. Computed once from the
+   * whole take, never from the window — a window-relative gain would make a quiet
+   * passage look loud the moment you scrolled to it.
+   */
+  waveGain: number;
+  /** Said in the lane when there are no peaks to draw, because blank explains nothing. */
+  waveNote: string | null;
   notes: Note[];
   selected: number | null;
   analysis: Analysis;
   /** Where playback has reached, in seconds, or null when stopped. */
   playhead: number | null;
-  /** Whether the window is being played round and round. */
-  loop: boolean;
+  /** The stretch being played round and round, in seconds, or null. */
+  loop: [number, number] | null;
 }
 
 function token(style: CSSStyleDeclaration, name: string, fallback: string): string {
   return style.getPropertyValue(name).trim() || fallback;
 }
+
+/** How wide the grips on a selected note are drawn. `hitTest` grabs a wider band. */
+const GRIP_PX = 7;
+/** The tab at each end of the loop, in the waveform lane where it is dragged. */
+const LOOP_TAB_PX = 10;
 
 /** A ruler step that leaves room between labels at the current zoom. */
 function timeStep(spanSeconds: number): number {
@@ -41,7 +54,7 @@ function timeStep(spanSeconds: number): number {
 }
 
 export function drawTranscription(ctx: CanvasRenderingContext2D, frame: Frame): void {
-  const { scale, peaks, notes, selected, analysis, playhead, loop } = frame;
+  const { scale, peaks, waveGain, waveNote, notes, selected, analysis, playhead, loop } = frame;
   const { width, height } = scale;
   const windowEnd = scale.startSeconds + scale.spanSeconds;
 
@@ -60,16 +73,39 @@ export function drawTranscription(ctx: CanvasRenderingContext2D, frame: Frame): 
   ctx.fillRect(0, 0, width, WAVE_HEIGHT);
 
   const mid = WAVE_HEIGHT / 2;
+
+  // The silence line, drawn whether or not there is a take over it: an empty lane with
+  // nothing in it at all reads as a bug, and this reads as silence.
+  ctx.strokeStyle = border;
+  ctx.globalAlpha = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(0, mid + 0.5);
+  ctx.lineTo(width, mid + 0.5);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
   ctx.strokeStyle = text2;
   ctx.globalAlpha = 0.75;
   ctx.beginPath();
   peaks.forEach(([min, max], index) => {
     const x = index + 0.5;
-    ctx.moveTo(x, mid - max * (mid - 4));
-    ctx.lineTo(x, mid - min * (mid - 4));
+    // Clamped after the gain, not before: a take normalised up has samples that would
+    // otherwise draw outside the lane and over the notes.
+    const top = Math.max(-1, Math.min(1, max * waveGain));
+    const bottom = Math.max(-1, Math.min(1, min * waveGain));
+    ctx.moveTo(x, mid - top * (mid - 4));
+    ctx.lineTo(x, mid - bottom * (mid - 4));
   });
   ctx.stroke();
   ctx.globalAlpha = 1;
+
+  if (waveNote) {
+    ctx.fillStyle = text2;
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(waveNote, width / 2, mid - 8);
+    ctx.textAlign = "left";
+  }
 
   // ---- time ruler ----
   // Only worth its ink once the window is shorter than the take: at full zoom-out the
@@ -187,13 +223,19 @@ export function drawTranscription(ctx: CanvasRenderingContext2D, frame: Frame): 
     ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
     if (isSelected) {
-      ctx.strokeStyle = token(style, "--key-white", "#e8eaf0");
+      const white = token(style, "--key-white", "#e8eaf0");
+      ctx.strokeStyle = white;
       ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
-      // Handles, because the two gestures at a note's ends are not discoverable on a
-      // touchscreen and the selected note is the one being worked on.
-      ctx.fillStyle = token(style, "--key-white", "#e8eaf0");
-      ctx.fillRect(rect.x, rect.y, 2, rect.height);
-      ctx.fillRect(rect.x + rect.width - 2, rect.y, 2, rect.height);
+
+      // Grips, at both ends. The gesture that changes a note's length is the least
+      // discoverable thing in this view — there is nothing on a plain box to say its
+      // ends do something different from its middle — and on a touchscreen there is no
+      // cursor to change shape and tell you. So they are drawn, they stand proud of the
+      // note, and `hitTest` gives them a grab area wider than they look.
+      const grip = Math.min(GRIP_PX, Math.max(3, rect.width / 3));
+      ctx.fillStyle = white;
+      ctx.fillRect(rect.x, rect.y - 2, grip, rect.height + 4);
+      ctx.fillRect(rect.x + rect.width - grip, rect.y - 2, grip, rect.height + 4);
     }
     ctx.globalAlpha = 1;
   });
@@ -211,12 +253,28 @@ export function drawTranscription(ctx: CanvasRenderingContext2D, frame: Frame): 
   }
 
   // ---- the loop ----
-  // What repeats is what is on screen, so the mark is on the frame rather than inside
-  // it: a band across the window would be a band across everything.
+  //
+  // The part that will *not* play is dimmed, rather than the part that will being
+  // tinted: the loop is where the work is happening, and a wash over it would sit
+  // between the eye and the notes being judged. Its edges carry tabs in the waveform
+  // lane, which is where they are dragged.
   if (loop) {
+    const [from, to] = loop;
+    const left = xOf(scale, from);
+    const right = xOf(scale, to);
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+    if (left > 0) ctx.fillRect(0, 0, Math.min(left, width), height);
+    if (right < width) ctx.fillRect(Math.max(0, right), 0, width - Math.max(0, right), height);
+
     ctx.fillStyle = accent;
-    ctx.fillRect(0, 0, width, 3);
-    ctx.fillRect(0, 0, 3, WAVE_HEIGHT);
-    ctx.fillRect(width - 3, 0, 3, WAVE_HEIGHT);
+    for (const [x, tab] of [
+      [left, left],
+      [right, right - LOOP_TAB_PX],
+    ] as const) {
+      if (x < -LOOP_TAB_PX || x > width + LOOP_TAB_PX) continue;
+      ctx.fillRect(x - 1, 0, 2, height);
+      ctx.fillRect(tab, 0, LOOP_TAB_PX, LOOP_TAB_PX + 4);
+    }
   }
 }

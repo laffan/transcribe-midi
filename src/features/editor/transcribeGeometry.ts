@@ -352,16 +352,26 @@ export function snapSeconds(analysis: Analysis, seconds: number, snap: Snap): nu
 /**
  * What a press at (x, y) grabs. Topmost note wins, and its outer few pixels resize
  * rather than move.
+ *
+ * `grab` is how wide those outer pixels are, and it is a parameter because it is not a
+ * property of the drawing: a fingertip covers about ten times the area a mouse pointer
+ * aims at, and the grips are drawn at one size and grabbed at another on purpose.
  */
-export function hitTest(scale: Scale, notes: Note[], x: number, y: number): Drag {
+export function hitTest(
+  scale: Scale,
+  notes: Note[],
+  x: number,
+  y: number,
+  grab: number = EDGE_PX,
+): Drag {
   for (let index = notes.length - 1; index >= 0; index -= 1) {
     const rect = noteRect(scale, notes[index]!);
-    if (x < rect.x - EDGE_PX || x > rect.x + rect.width + EDGE_PX) continue;
+    if (x < rect.x - grab || x > rect.x + rect.width + grab) continue;
     if (y < rect.y - 4 || y > rect.y + rect.height + 4) continue;
 
     // A note narrower than three grab widths is all edge and no middle, and the middle
     // is the gesture you cannot get any other way.
-    const edge = Math.min(EDGE_PX, rect.width / 3);
+    const edge = Math.min(grab, rect.width / 3);
     if (x <= rect.x + edge) return { type: "left", index };
     if (x >= rect.x + rect.width - edge) return { type: "right", index };
     return {
@@ -373,6 +383,34 @@ export function hitTest(scale: Scale, notes: Note[], x: number, y: number): Drag
     };
   }
   return { type: "none" };
+}
+
+/** A stretch of the take to play round and round, in seconds. */
+export type Loop = [number, number];
+
+/** Ordered, non-zero, and inside the take. A loop dragged right-to-left is still a loop. */
+export function normalizeLoop(a: number, b: number, duration: number): Loop {
+  const from = Math.max(0, Math.min(a, b));
+  const to = Math.min(duration, Math.max(a, b));
+  // 30 ms is about a single cycle of a low note: shorter than that is a slip of the
+  // finger rather than a loop, and it would sound like a click.
+  return to - from < 0.03 ? [from, Math.min(duration, from + 0.03)] : [from, to];
+}
+
+/** Which end of the loop a press at `x` has hold of, if either. */
+export function loopEdgeAt(
+  scale: Scale,
+  loop: Loop | null,
+  x: number,
+  grab: number,
+): "start" | "end" | null {
+  if (!loop) return null;
+  const start = xOf(scale, loop[0]);
+  const end = xOf(scale, loop[1]);
+  const toStart = Math.abs(x - start);
+  const toEnd = Math.abs(x - end);
+  if (Math.min(toStart, toEnd) > grab) return null;
+  return toStart <= toEnd ? "start" : "end";
 }
 
 /**

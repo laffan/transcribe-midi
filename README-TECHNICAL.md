@@ -323,12 +323,16 @@ stamp, not the file timestamps — Logic caches AU scans and keeps extension pro
 `Space` play/pause · `R` record · `L` listen/transcribe · `J` join selection · `⌘K`
 prompt · `⌘Z`/`⇧⌘Z` undo/redo · `⌘A` select all · `⌘C/X/V` copy/cut/paste at playhead ·
 `⌘Q` quantize · `⌫` delete · arrows nudge (`⇧` = octave/bar) · `⌥`-click delete note ·
-`⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects.
+`⌘`-scroll zoom · `⇧`-scroll pan · click empty grid draws, drag marquee-selects. In the
+ruler, a tap moves the playhead and a **drag marks the loop** — its ends are tabs you can
+drag afterwards. The selected note's right-hand end is a grip: drag it to change length.
 
-In the Listen review stage: `Space` play/stop · `L` loop what is on screen · `J` join ·
-`⌫` delete · arrows step the selected note (`↑↓` a semitone, `⇧` an octave; `←→` along
-the take, `⇧` ten times as far) · `+`/`−` zoom time, `0` fit · `⌘`-scroll zooms time and
-`⇧⌘`-scroll pitch · two fingers pinch, sideways for time and up-and-down for pitch.
+In the Listen review stage: `Space` play/stop · `L` loop · `J` join · `⌫` delete · arrows
+step the selected note (`↑↓` a semitone, `⇧` an octave; `←→` along the take, `⇧` ten times
+as far) · `+`/`−` zoom time, `0` fit · `⌘`-scroll zooms time and `⇧⌘`-scroll pitch · two
+fingers pinch, sideways for time and up-and-down for pitch. In the waveform lane, a press
+plays from that moment and a **drag marks the stretch to loop**; without one, Loop plays
+whatever is on screen. Both ends of the selected note are grips.
 
 **Two modes take the keyboard, and while either is on the editor's shortcuts are
 suspended.** This is deliberate: the letter keys mean different things in each, and there

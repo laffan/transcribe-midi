@@ -470,6 +470,7 @@ export function Editor({ projectId, settingsRevision, onClose, onOpenSettings }:
                 playheadTicks={transport.positionTicks}
                 onScrub={(tick) => void transport.seek(tick)}
                 loopRegion={transport.loopRegion}
+                onLoopChange={(region) => void transport.setLoop(region)}
                 preview={rollPreview}
                 shortcutsSuspended={typing || listen.stage !== null}
               />

@@ -100,6 +100,16 @@ check(
   `value ${await page.locator(".tedit__control select").inputValue()}`,
 );
 
+// The fixture is recorded quietly, like a real take on a tablet. Drawn at absolute
+// amplitude it is a flat line in a 96px lane, which reads as a broken waveform rather
+// than as a quiet one — so the lane normalises, and says so.
+const readoutText = (await page.locator(".tedit__readout").textContent()) ?? "";
+check(
+  "a quiet take is amplified to be visible",
+  /waveform ×\d+/.test(readoutText),
+  readoutText.trim(),
+);
+
 const closeBox = await page.locator(".listen__close").boundingBox();
 check(
   "the close button is at least twice a control",
@@ -217,6 +227,28 @@ check("the loop is still running a second later", await page.locator(".listen bu
 await page.locator(".listen button", { hasText: /Stop/ }).first().click();
 await page.waitForTimeout(200);
 check("stop stops it", await page.locator(".listen button", { hasText: /Play/ }).isVisible());
+
+// --- marking a stretch to loop ---------------------------------------------
+
+// A drag across the waveform lane marks it; a press without travel plays from there.
+await touch("touchStart", [at(0.3, 0.06)]);
+await touch("touchMove", [at(0.4, 0.06)]);
+await touch("touchMove", [at(0.55, 0.06)]);
+await touch("touchEnd", []);
+const marked = page.locator(".tedit__loop button").nth(1);
+check("dragging the waveform marks a stretch", (await marked.count()) === 1);
+if ((await marked.count()) === 1) {
+  const label = await marked.textContent();
+  const seconds = Number(/([\d.]+)s/.exec(label ?? "")?.[1] ?? 0);
+  check("of about the length that was dragged", seconds > 0.3 && seconds < 3, `${seconds}s`);
+  check(
+    "and turns looping on",
+    (await page.locator(".listen button[aria-pressed=true]", { hasText: /Loop/ }).count()) === 1,
+  );
+  await marked.click();
+  await page.waitForTimeout(200);
+  check("clearing it goes back to looping the window", (await marked.count()) === 0);
+}
 
 // --- the dials ------------------------------------------------------------
 

@@ -114,6 +114,21 @@ export function useTransport({ manifest, settingsRevision, onRecorded }: UseTran
     }
   }, [recording, onRecorded]);
 
+  /**
+   * Set the looped span outright, or clear it.
+   *
+   * Beside `toggleLoop` rather than instead of it: the button is for "loop around here,
+   * I do not care exactly where", and dragging it out in the ruler is for when you do.
+   * Both end at the same command, so the transport cannot hold two ideas of the loop.
+   */
+  const setLoop = useCallback(async (region: [number, number] | null) => {
+    try {
+      setLoopRegion((await api.setLoopRegion(region)).loop_region);
+    } catch (error) {
+      logger.error("Could not set the loop", errorMessage(error));
+    }
+  }, []);
+
   const toggleLoop = useCallback(async () => {
     if (!manifest) return;
     // Default to two bars from the playhead: a loop has to come from somewhere, and
@@ -166,6 +181,7 @@ export function useTransport({ manifest, settingsRevision, onRecorded }: UseTran
     stop,
     seek,
     toggleRecord,
+    setLoop,
     toggleLoop,
     toggleMetronome,
     changeTempo,

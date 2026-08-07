@@ -138,19 +138,52 @@ export function hitTest(
   x: number,
   y: number,
   view: Viewport,
+  grab: number = RESIZE_HANDLE_PX,
 ): { index: number; onResizeHandle: boolean } | null {
   for (let index = notes.length - 1; index >= 0; index -= 1) {
     const rect = noteRect(notes[index]!, index, view);
     if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
+      // Only offer the resize grip if the note is wide enough that the grip does not
+      // swallow the whole body. `grab` is wider than the grip is drawn, and wider again
+      // for a finger, because the band you have to hit is not the band you can see.
+      const band = Math.min(grab, rect.width / 3);
       return {
         index,
-        // Only offer the resize grip if the note is wide enough that the grip does not
-        // swallow the whole body.
-        onResizeHandle: rect.width > RESIZE_HANDLE_PX * 2 && x >= rect.x + rect.width - RESIZE_HANDLE_PX,
+        onResizeHandle: rect.width > RESIZE_HANDLE_PX * 2 && x >= rect.x + rect.width - band,
       };
     }
   }
   return null;
+}
+
+/** Which end of the loop a press at `x` has hold of, if either. */
+export function loopEdgeAt(
+  loop: [number, number] | null,
+  x: number,
+  view: Viewport,
+  grab: number,
+): "start" | "end" | null {
+  if (!loop) return null;
+  const toStart = Math.abs(x - tickToX(loop[0], view));
+  const toEnd = Math.abs(x - tickToX(loop[1], view));
+  if (Math.min(toStart, toEnd) > grab) return null;
+  return toStart <= toEnd ? "start" : "end";
+}
+
+/**
+ * A loop from two ticks, ordered and never shorter than one grid step.
+ *
+ * A zero-length loop is a click that happened to travel one pixel, and playing it would
+ * be a stutter rather than a bar; a grid step is the smallest thing anyone means.
+ */
+export function normalizeLoopTicks(
+  a: number,
+  b: number,
+  minimum: number,
+): [number, number] {
+  const from = Math.max(0, Math.min(a, b));
+  const to = Math.max(a, b);
+  return [from, Math.max(to, from + Math.max(1, minimum))];
 }
 
 export interface Marquee {
